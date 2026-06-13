@@ -84,7 +84,7 @@ export function render(root) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm btn-ghost" data-open="${esc(String(item.id))}">查看</button>
-          <button class="btn btn-sm btn-danger" data-cancel="${esc(String(item.id))}">中止</button>
+          <button class="btn btn-sm btn-danger" data-cancel="${esc(String(item.id))}" data-confirm="确认中止该队列任务？">中止</button>
         </div>
       </div>`).join('');
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => { location.hash = `#/runs/${b.dataset.open}`; }));
@@ -117,6 +117,9 @@ export function render(root) {
   }
 
   async function cancelRun(id) {
+    const btn = root.querySelector(`[data-cancel="${esc(String(id))}"]`);
+    const msg = btn && btn.getAttribute('data-confirm') ? btn.getAttribute('data-confirm') : '确认中止该队列任务？';
+    if (!confirm(msg)) return;
     await api(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
     await refreshQueue();
   }

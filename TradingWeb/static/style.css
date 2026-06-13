@@ -394,6 +394,78 @@ input[type="date"].input::-webkit-calendar-picker-indicator { filter: invert(0.7
 
 /* agent 状态板 */
 .agent-board { padding: var(--sp-4); position: sticky; top: 76px; }
+
+/* ============ 运行操作条 ============ */
+.action-bar {
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: space-between;
+  row-gap: var(--sp-3);
+}
+
+.action-bar-top {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.action-bar-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.action-bar-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.action-bar-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.action-bar .badge {
+  height: 28px;
+}
+
+.action-bar .btn.btn-outline {
+  border-color: var(--border-strong);
+  background: transparent;
+}
+
+.action-bar .btn {
+  min-height: 30px;
+  border-radius: 8px;
+  padding-inline: 11px;
+}
+
+.action-meta {
+  width: 100%;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.action-meta.mono {
+  font-family: var(--font-mono);
+}
+
+.action-bar .btn.btn-ghost {
+  border-color: var(--border);
+}
 .panel-title {
   font-size: 11.5px; font-weight: 700; letter-spacing: 0.12em; color: var(--text-faint);
   margin: 0 0 var(--sp-3); text-transform: uppercase;

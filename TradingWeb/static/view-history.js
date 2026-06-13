@@ -56,9 +56,9 @@ export function render(root) {
           <td class="cell-dim mono">${esc(fmtDuration(r.created_at, r.finished_at))}</td>
           <td class="cell-actions">
             <button class="btn btn-sm btn-ghost act-view" data-id="${esc(String(r.id))}">查看</button>
-            <button class="btn btn-sm act-rerun" data-id="${esc(String(r.id))}">重跑</button>
-            <button class="btn btn-sm act-export" data-id="${esc(String(r.id))}">导出</button>
-            <button class="btn btn-sm btn-danger act-del" data-id="${esc(String(r.id))}">删除</button>
+            <button class="btn btn-sm act-rerun" data-id="${esc(String(r.id))}" data-confirm="确认基于当前配置重新发起一次分析？">重跑</button>
+            <button class="btn btn-sm act-export" data-id="${esc(String(r.id))}" data-confirm="确认导出 JSON 报告？">导出</button>
+            <button class="btn btn-sm btn-danger act-del" data-id="${esc(String(r.id))}" data-confirm="确定要删除这条分析记录吗？该操作不可恢复。">删除</button>
           </td>
         </tr>`).join('');
       bodyHtml = `
@@ -117,6 +117,7 @@ export function render(root) {
   }
 
   async function onRerun(btn) {
+    if (!confirm(btn.getAttribute('data-confirm') || '确认重跑？')) return;
     btn.disabled = true;
     btn.textContent = '重跑中…';
     try {
@@ -129,6 +130,7 @@ export function render(root) {
   }
 
   async function onExport(btn) {
+    if (!confirm(btn.getAttribute('data-confirm') || '确认导出？')) return;
     const res = await fetch(`/api/runs/${encodeURIComponent(btn.dataset.id)}/export?format=json`, { credentials: 'same-origin' });
     const text = await res.text();
     const blob = new Blob([text], { type: 'application/json' });
@@ -140,7 +142,7 @@ export function render(root) {
   }
 
   async function onDelete(btn) {
-    if (!window.confirm('确定要删除这条分析记录吗？该操作不可恢复。')) return;
+    if (!window.confirm(btn.getAttribute('data-confirm') || '确定要删除吗？')) return;
     btn.disabled = true;
     btn.textContent = '删除中…';
     try {

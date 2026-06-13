@@ -157,65 +157,123 @@ export function render(root, id) {
     const memMeta = memPath ? `<div class="action-meta mono">${esc(memPath)}</div>` : '';
     box.innerHTML = `
       <div class="card action-bar">
-        <div class="action-bar-left">
-          <span class="badge badge-grey">Checkpoint: ${checkpointEnabled ? '已开启' : '未开启'}</span>
-          <span class="badge badge-grey">Checkpoint: ${cpCount > 0 ? '可用' : '无'}</span>
-          <span class="badge badge-grey">Memory: ${memPath ? '已隔离' : '未知'}</span>
+        <div class="action-bar-top">
+          <div class="action-bar-title">运行操作</div>
+          <div class="action-bar-left">
+            <span class="badge badge-grey">Checkpoint：${checkpointEnabled ? '已开启' : '未开启'}</span>
+            <span class="badge badge-grey">Checkpoint：${cpCount > 0 ? '可用' : '无'}</span>
+            <span class="badge badge-grey">Memory：${memPath ? '已隔离' : '未知'}</span>
+          </div>
         </div>
         <div class="action-bar-right">
-          <button class="btn btn-sm btn-danger" id="btn-cancel">中止运行</button>
-          <button class="btn btn-sm" id="btn-rerun">复制并重跑</button>
-          <button class="btn btn-sm" id="btn-export-json">导出 JSON</button>
-          <button class="btn btn-sm" id="btn-export-md">导出 MD</button>
-          <button class="btn btn-sm" id="btn-clear-cp">清理 checkpoint</button>
-          <button class="btn btn-sm" id="btn-clear-mem">清理记忆</button>
+          <button class="btn btn-sm btn-danger" id="btn-cancel" data-confirm="确认中止当前运行？中断后可重新发起分析。">中止运行</button>
+          <button class="btn btn-sm btn-primary" id="btn-rerun" data-confirm="确认基于当前配置重新发起一次分析？">复制并重跑</button>
+          <button class="btn btn-sm btn-outline" id="btn-export-json" data-confirm="确认导出 JSON 报告？">导出 JSON</button>
+          <button class="btn btn-sm btn-outline" id="btn-export-md" data-confirm="确认导出 MD 报告？">导出 MD</button>
+          <button class="btn btn-sm btn-ghost" id="btn-clear-cp" data-confirm="确认清理所有 checkpoint？该操作仅影响本地缓存。">清理 checkpoint</button>
+          <button class="btn btn-sm btn-ghost" id="btn-clear-mem" data-confirm="确认清理当前用户的记忆文件？该操作不可恢复。">清理记忆</button>
         </div>
         ${cpList}
         ${memMeta}
       </div>`;
-    box.querySelector('#btn-cancel')?.addEventListener('click', onCancel);
-    box.querySelector('#btn-rerun')?.addEventListener('click', onRerun);
-    box.querySelector('#btn-export-json')?.addEventListener('click', () => exportRun('json'));
-    box.querySelector('#btn-export-md')?.addEventListener('click', () => exportRun('md'));
-    box.querySelector('#btn-clear-cp')?.addEventListener('click', clearCheckpoints);
-    box.querySelector('#btn-clear-mem')?.addEventListener('click', clearMemory);
+
+    box.querySelectorAll('[data-confirm]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        const target = e.currentTarget;
+        const msg = target.getAttribute('data-confirm') || '确认执行此操作？';
+        if (!confirm(msg)) return;
+
+        if (target.id === 'btn-rerun') {
+          await onRerun(target);
+          return;
+        }
+        if (target.id === 'btn-export-json') {
+          await exportRun('json', target);
+          return;
+        }
+        if (target.id === 'btn-export-md') {
+          await exportRun('md', target);
+          return;
+        }
+        if (target.id === 'btn-cancel') {
+          await onCancel(target);
+          return;
+        }
+        if (target.id === 'btn-clear-cp') {
+          await clearCheckpoints(target);
+          return;
+        }
+        if (target.id === 'btn-clear-mem') {
+          await clearMemory(target);
+          return;
+        }
+      });
+    });
   }
 
-  async function onRerun() {
-    if (!confirm('基于当前配置重新发起一次分析？')) return;
-    const d = await api(`/api/runs/${encodeURIComponent(id)}/rerun`, { method: 'POST' });
-    location.hash = `#/runs/${d.id}`;
+  async function withBusy(button, busyText, fn) {
+    if (!button) {
+      await fn();
+      return;
+    }
+    const old = button.dataset.label || button.textContent;
+    button.dataset.label = old;
+    button.disabled = true;
+    button.textContent = busyText;
+    try {
+      await fn();
+    } finally {
+      button.disabled = false;
+      button.textContent = button.dataset.label || old;
+      delete button.dataset.label;
+    }
   }
 
-  async function onCancel() {
-    if (!confirm('中止当前运行？')) return;
-    await api(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
-    await loadAuxInfo();
-    location.reload();
+  async function onRerun(btn) {
+    await withBusy(btn, '重跑中…', async () => {
+      const d = await api(`/api/runs/${encodeURIComponent(id)}/rerun`, { method: 'POST' });
+      location.hash = `#/runs/${d.id}`;
+    });
   }
 
-  async function exportRun(format) {
-    const url = `/api/runs/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`;
-    const res = await fetch(url, { credentials: 'same-origin' });
-    const text = await res.text();
-    const blob = new Blob([text], { type: format === 'json' ? 'application/json' : 'text/plain' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `run-${id}.${format === 'json' ? 'json' : 'md'}`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  async function onCancel(btn) {
+    await withBusy(btn, '中止中…', async () => {
+      await api(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+      await loadAuxInfo();
+      location.reload();
+    });
   }
 
-  async function clearCheckpoints() {
-    if (!confirm('清理所有 checkpoint？')) return;
-    await api('/api/checkpoints', { method: 'DELETE' });
-    await loadAuxInfo();
+  async function exportRun(format, btn) {
+    await withBusy(btn, `导出${format.toUpperCase()}中…`, async () => {
+      const url = `/api/runs/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`;
+      const res = await fetch(url, { credentials: 'same-origin' });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '导出失败');
+        throw new Error(text || '导出失败');
+      }
+      const text = await res.text();
+      const blob = new Blob([text], { type: format === 'json' ? 'application/json' : 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `run-${id}.${format === 'json' ? 'json' : 'md'}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
   }
 
-  async function clearMemory() {
-    if (!confirm('清理当前用户的记忆文件？')) return;
-    await api('/api/memory', { method: 'DELETE' });
-    await loadAuxInfo();
+  async function clearCheckpoints(btn) {
+    await withBusy(btn, '清理中…', async () => {
+      await api('/api/checkpoints', { method: 'DELETE' });
+      await loadAuxInfo();
+    });
+  }
+
+  async function clearMemory(btn) {
+    await withBusy(btn, '清理中…', async () => {
+      await api('/api/memory', { method: 'DELETE' });
+      await loadAuxInfo();
+    });
   }
 
   /* ============ 局部渲染 ============ */
