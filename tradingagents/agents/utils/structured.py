@@ -62,7 +62,20 @@ def invoke_structured_or_freetext(
     if structured_llm is not None:
         try:
             result = structured_llm.invoke(prompt)
-            return render(result)
+            # Some OpenAI-compatible gateways return an empty/non-conforming
+            # tool call, which langchain parses to None instead of raising.
+            # Treat that as a structured failure explicitly so the log is
+            # accurate ("returned no structured output") rather than a
+            # misleading "'NoneType' object has no attribute ...".
+            if result is None:
+                logger.warning(
+                    "%s: structured-output returned no result "
+                    "(gateway likely does not honor the structured method); "
+                    "retrying once as free text",
+                    agent_name,
+                )
+            else:
+                return render(result)
         except Exception as exc:
             logger.warning(
                 "%s: structured-output invocation failed (%s); retrying once as free text",

@@ -11,5 +11,8 @@ build
 dist
 results
 eval_results
+TradingWeb/data
+TradingWeb/**/__pycache__
+TradingWeb/**/*.pyc
 Dockerfile
 docker-compose.yml

@@ -128,6 +128,35 @@ cp .env.example .env  # add your API keys
 docker compose run --rm tradingagents
 ```
 
+TradingWeb's image is built directly on top of an already-published CLI image (`ghcr.io/osindex/tradingagents-cli:cli`) via the `CLI_IMAGE` build-arg, rather than rebuilding the TradingAgents core and re-running `pip install .` each time. The web build only layers the TradingWeb dependencies and source on top, so `main`/tag web builds are fast. Local `docker compose ... --build` defaults `CLI_IMAGE` to the in-tree `cli` stage, so it stays self-contained. Note this version-locks the web image to the cli image: change core `tradingagents/` logic → republish the cli image first, then the web build picks it up.
+
+Because the web image already contains the full CLI/core code, a single web container is enough to run analyses — each analysis executes in the web process. Per-user isolation (provider profile/config, memory, checkpoints, run history) is handled inside the web app by login user, so you do NOT need to run a separate CLI container for that. Run the interactive CLI on demand with `docker compose -f docker-compose.web.yml run --rm -it tradingweb tradingagents`.
+
+If you point a container at a gateway running on the host, note that `host.docker.internal` is not always available on Linux unless the compose file adds `extra_hosts: host.docker.internal:host-gateway`. When that is not available, use the host LAN IP (for example `http://192.168.1.10:3000/v1`) or add the `extra_hosts` mapping yourself.
+
+### TradingWeb (Web UI)
+
+Run the packaged TradingWeb image with a single compose file, `docker-compose.web.yml`. It supports both local build and pulling a prebuilt GHCR image (via `TRADINGWEB_IMAGE`).
+
+CI also publishes `ghcr.io/osindex/tradingagents-cli:<tag>` so CLI can run as a standalone image.
+
+Current split rule:
+
+- `tradingagents-cli` builds on `cli` branch
+- `tradingagents-tradingweb` builds on `main` and `v*` tags
+
+CLI image tag example includes branch-based tag (for this branch): `cli`.
+
+Add default users via `TRADINGWEB_USERS`:
+
+```bash
+TRADINGWEB_USERS="admin:change-me,alice:strong-password" \
+TRADINGWEB_SECRET="replace-with-random-secret" \
+docker compose -f docker-compose.web.yml up --pull always
+```
+
+If `TRADINGWEB_USERS` is not set, the compose falls back to `admin:admin` for local testing only. In production, always set a strong password and a proper `TRADINGWEB_SECRET`.
+
 For local models with Ollama:
 ```bash
 docker compose --profile ollama run --rm tradingagents-ollama

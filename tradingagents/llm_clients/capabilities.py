@@ -14,9 +14,11 @@ as declarative per-model fields).
 
 from __future__ import annotations
 
+import dataclasses
+import os
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 
 StructuredMethod = Literal[
@@ -25,6 +27,24 @@ StructuredMethod = Literal[
     "json_schema",       # uses response_format={"type":"json_schema",...}
     "none",              # no structured output available; caller falls back to free-text
 ]
+
+_VALID_METHODS = {"function_calling", "json_mode", "json_schema", "none"}
+
+
+def _structured_method_override() -> Optional[StructuredMethod]:
+    """Optional global override for the structured-output method.
+
+    Many OpenAI-compatible gateways implement chat/completions but do NOT
+    honor the function_calling structured path: the tool call comes back
+    empty and langchain parses it to None, forcing every structured agent to
+    fall back to free text. Setting
+    ``TRADINGAGENTS_STRUCTURED_METHOD=json_mode`` (or ``json_schema`` /
+    ``function_calling`` / ``none``) lets such deployments switch to a method
+    the gateway actually supports, without editing per-model rows. Unset =
+    keep each model's table default (no behavior change for native OpenAI).
+    """
+    raw = (os.environ.get("TRADINGAGENTS_STRUCTURED_METHOD", "") or "").strip().lower()
+    return raw if raw in _VALID_METHODS else None
 
 
 @dataclass(frozen=True)
@@ -117,7 +137,7 @@ _BY_PATTERN: list[tuple[re.Pattern[str], ModelCapabilities]] = [
 ]
 
 
-def get_capabilities(model_name: str) -> ModelCapabilities:
+def _resolve_base(model_name: str) -> ModelCapabilities:
     """Resolve capabilities by exact ID, then pattern, then default."""
     if model_name in _BY_ID:
         return _BY_ID[model_name]
@@ -125,3 +145,17 @@ def get_capabilities(model_name: str) -> ModelCapabilities:
         if pattern.match(model_name):
             return caps
     return _DEFAULT
+
+
+def get_capabilities(model_name: str) -> ModelCapabilities:
+    """Resolve capabilities, applying the optional structured-method override.
+
+    The TRADINGAGENTS_STRUCTURED_METHOD env var (when set to a valid method)
+    overrides the resolved ``preferred_structured_method`` so gateways that
+    reject the model's default method can opt into one they support.
+    """
+    base = _resolve_base(model_name)
+    override = _structured_method_override()
+    if override is not None and override != base.preferred_structured_method:
+        return dataclasses.replace(base, preferred_structured_method=override)
+    return base
