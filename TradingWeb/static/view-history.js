@@ -55,10 +55,12 @@ export function render(root) {
           <td class="cell-dim mono">${esc(fmtDateTime(r.created_at))}</td>
           <td class="cell-dim mono">${esc(fmtDuration(r.created_at, r.finished_at))}</td>
           <td class="cell-actions">
-            <button class="btn btn-sm btn-ghost act-view" data-id="${esc(String(r.id))}">查看</button>
-            <button class="btn btn-sm act-rerun" data-id="${esc(String(r.id))}" data-confirm="确认基于当前配置重新发起一次分析？">重跑</button>
-            <button class="btn btn-sm act-export" data-id="${esc(String(r.id))}" data-confirm="确认导出 JSON 报告？">导出</button>
-            <button class="btn btn-sm btn-danger act-del" data-id="${esc(String(r.id))}" data-confirm="确定要删除这条分析记录吗？该操作不可恢复。">删除</button>
+            <button class="btn btn-sm btn-primary act-view" data-id="${esc(String(r.id))}">查看</button>
+            <div class="cell-actions-more">
+              <button class="btn btn-sm btn-ghost act-rerun" data-id="${esc(String(r.id))}" data-confirm="确认基于当前配置重新发起一次分析？" title="复制配置并重新发起分析">重跑</button>
+              <button class="btn btn-sm btn-ghost act-export" data-id="${esc(String(r.id))}" data-confirm="确认导出该分析的 JSON 报告？" title="导出 JSON 报告">导出</button>
+              <button class="btn btn-sm btn-ghost act-del" data-id="${esc(String(r.id))}" data-confirm="确定要删除这条分析记录吗？该操作不可恢复。" title="删除该记录">删除</button>
+            </div>
           </td>
         </tr>`).join('');
       bodyHtml = `

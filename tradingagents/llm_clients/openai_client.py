@@ -1,4 +1,6 @@
+import logging
 import os
+from urllib.parse import urlparse
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage
@@ -8,6 +10,8 @@ from .api_key_env import get_api_key_env
 from .base_client import BaseLLMClient, normalize_content
 from .capabilities import get_capabilities
 from .validators import validate_model
+
+logger = logging.getLogger(__name__)
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
@@ -148,6 +152,43 @@ _PASSTHROUGH_KWARGS = (
     "api_key", "callbacks", "http_client", "http_async_client",
 )
 
+
+def _env_truthy(name: str) -> bool:
+    """Parse a boolean-like environment flag."""
+    return (os.environ.get(name, "") or "").strip().lower() in {
+        "1",
+        "true",
+        "t",
+        "yes",
+        "y",
+        "on",
+    }
+
+
+def _supports_openai_responses_api(base_url: Optional[str]) -> bool:
+    """Heuristic: keep Responses API only for native OpenAI endpoints.
+
+    Some custom/OpenAI-compatible gateways do not implement the Responses API
+    schema and reject tool payload fields such as ``custom_tool_call``.
+    Falling back to Chat Completions for non-native endpoints avoids
+    responses/tool-call validation 400s while preserving existing behavior for
+    official OpenAI endpoints.
+    """
+    if not base_url:
+        return True
+
+    # Some gateways/proxy deployments claim OpenAI compatibility but do not
+    # yet support the responses tool-call schema.
+    if _env_truthy("TRADINGAGENTS_DISABLE_OPENAI_RESPONSES_API"):
+        return False
+    try:
+        host = (urlparse(base_url).hostname or "").lower()
+    except ValueError:
+        return True
+    # Suffix match so only genuine OpenAI hosts qualify; "notopenai.com.evil"
+    # or "openai.com.proxy.local" must not be treated as native OpenAI.
+    return host == "openai.com" or host.endswith(".openai.com")
+
 # Provider base URLs. API-key env vars live in api_key_env.PROVIDER_API_KEY_ENV
 # (one canonical mapping consulted by both this client and the CLI's
 # interactive key-prompt). Dual-region providers (qwen/glm/minimax) keep
@@ -234,9 +275,26 @@ class OpenAIClient(BaseLLMClient):
                 llm_kwargs[key] = self.kwargs[key]
 
         # Native OpenAI: use Responses API for consistent behavior across
-        # all model families. Third-party providers use Chat Completions.
+        # all model families. Third-party providers (and OpenAI-compatible
+        # gateways behind a custom base_url) use Chat Completions, because
+        # many gateways do not implement the Responses tool-call schema and
+        # return HTTP 400 (e.g. ``Input should be 'custom_tool_call'``).
         if self.provider == "openai":
-            llm_kwargs["use_responses_api"] = True
+            use_responses = _supports_openai_responses_api(llm_kwargs.get("base_url"))
+            llm_kwargs["use_responses_api"] = use_responses
+            # ``reasoning_effort`` is a Responses-API parameter. On the Chat
+            # Completions fallback path, custom gateways frequently reject it
+            # with another 400, so drop it there rather than trading one
+            # gateway error for a different one.
+            if not use_responses:
+                llm_kwargs.pop("reasoning_effort", None)
+
+        logger.info(
+            "OpenAI client configured: provider=%s base_url=%s use_responses_api=%s",
+            self.provider,
+            llm_kwargs.get("base_url") or "<default>",
+            llm_kwargs.get("use_responses_api", False),
+        )
 
         # Provider-specific quirks live in their own subclasses so the
         # base NormalizedChatOpenAI stays free of provider branches.

@@ -155,26 +155,41 @@ export function render(root, id) {
     const cpList = checkpointInfo && checkpointInfo.files && checkpointInfo.files.length
       ? `<div class="action-meta mono">${checkpointInfo.files.map((f) => esc(f)).join('<br>')}</div>` : '';
     const memMeta = memPath ? `<div class="action-meta mono">${esc(memPath)}</div>` : '';
+    const active = isActive();
     box.innerHTML = `
       <div class="card action-bar">
         <div class="action-bar-top">
           <div class="action-bar-title">运行操作</div>
           <div class="action-bar-left">
-            <span class="badge badge-grey">Checkpoint：${checkpointEnabled ? '已开启' : '未开启'}</span>
-            <span class="badge badge-grey">Checkpoint：${cpCount > 0 ? '可用' : '无'}</span>
-            <span class="badge badge-grey">Memory：${memPath ? '已隔离' : '未知'}</span>
+            <span class="badge badge-grey">Checkpoint ${checkpointEnabled ? '已开启' : '未开启'}</span>
+            <span class="badge badge-grey">缓存 ${cpCount > 0 ? `${cpCount} 个` : '无'}</span>
+            <span class="badge badge-grey">Memory ${memPath ? '已隔离' : '未知'}</span>
           </div>
         </div>
-        <div class="action-bar-right">
-          <button class="btn btn-sm btn-danger" id="btn-cancel" data-confirm="确认中止当前运行？中断后可重新发起分析。">中止运行</button>
-          <button class="btn btn-sm btn-primary" id="btn-rerun" data-confirm="确认基于当前配置重新发起一次分析？">复制并重跑</button>
-          <button class="btn btn-sm btn-outline" id="btn-export-json" data-confirm="确认导出 JSON 报告？">导出 JSON</button>
-          <button class="btn btn-sm btn-outline" id="btn-export-md" data-confirm="确认导出 MD 报告？">导出 MD</button>
-          <button class="btn btn-sm btn-ghost" id="btn-clear-cp" data-confirm="确认清理所有 checkpoint？该操作仅影响本地缓存。">清理 checkpoint</button>
-          <button class="btn btn-sm btn-ghost" id="btn-clear-mem" data-confirm="确认清理当前用户的记忆文件？该操作不可恢复。">清理记忆</button>
+        <div class="action-groups">
+          <div class="action-group">
+            <span class="action-group-label">运行</span>
+            <div class="action-group-btns">
+              <button class="btn btn-sm btn-primary" id="btn-rerun" data-confirm="确认基于当前配置重新发起一次分析？">复制并重跑</button>
+              ${active ? '<button class="btn btn-sm btn-danger" id="btn-cancel" data-confirm="确认中止当前运行？中断后可重新发起分析。">中止运行</button>' : ''}
+            </div>
+          </div>
+          <div class="action-group">
+            <span class="action-group-label">导出</span>
+            <div class="action-group-btns">
+              <button class="btn btn-sm btn-outline" id="btn-export-json" data-confirm="确认导出 JSON 报告？">JSON</button>
+              <button class="btn btn-sm btn-outline" id="btn-export-md" data-confirm="确认导出 MD 报告？">Markdown</button>
+            </div>
+          </div>
+          <div class="action-group action-group-danger">
+            <span class="action-group-label">维护</span>
+            <div class="action-group-btns">
+              <button class="btn btn-sm btn-ghost" id="btn-clear-cp" data-confirm="确认清理所有 checkpoint？该操作仅影响本地缓存，不可恢复。">清理 checkpoint</button>
+              <button class="btn btn-sm btn-ghost" id="btn-clear-mem" data-confirm="确认清理当前用户的记忆文件？该操作不可恢复。">清理记忆</button>
+            </div>
+          </div>
         </div>
-        ${cpList}
-        ${memMeta}
+        ${cpList || memMeta ? `<details class="action-detail"><summary>查看路径详情</summary>${cpList}${memMeta}</details>` : ''}
       </div>`;
 
     box.querySelectorAll('[data-confirm]').forEach((btn) => {

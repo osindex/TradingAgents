@@ -5,6 +5,15 @@ services:
       context: .
       dockerfile: TradingWeb/Dockerfile
       target: cli
+    # The CLI image's default command is the interactive TUI (`tradingagents`),
+    # which aborts immediately under compose because there is no TTY/stdin
+    # ("Input is not a terminal (fd=0). Aborted."), and `restart: unless-stopped`
+    # then turns that abort into a crash loop. In mix mode this container is a
+    # companion that only needs to stay alive so it can share data volumes with
+    # the web service, so we override the command to idle instead of launching
+    # the wizard. Run the interactive CLI on demand with:
+    #   docker compose -f docker-compose.mix.yml run --rm -it tradingcli tradingagents
+    command: ["tail", "-f", "/dev/null"]
     env_file:
       - path: .env
         required: false
