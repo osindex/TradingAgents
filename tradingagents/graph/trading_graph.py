@@ -32,6 +32,7 @@ from tradingagents.agents.utils.agent_utils import (
     resolve_instrument_identity,
     get_stock_data,
     get_indicators,
+    get_verified_market_snapshot,
     get_fundamentals,
     get_balance_sheet,
     get_cashflow,
@@ -173,6 +174,12 @@ class TradingAgentsGraph:
                     get_stock_data,
                     # Technical indicators
                     get_indicators,
+                    # Deterministic verification snapshot the market analyst is
+                    # prompted to call before making exact numeric claims. Must
+                    # be registered here to match create_market_analyst's
+                    # bind_tools list, otherwise the LLM's tool call resolves to
+                    # "not a valid tool" and the anti-hallucination check is lost.
+                    get_verified_market_snapshot,
                 ]
             ),
             "social": ToolNode(
