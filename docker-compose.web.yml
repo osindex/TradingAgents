@@ -1,0 +1,25 @@
+services:
+  tradingweb:
+    image: ${TRADINGWEB_IMAGE:-ghcr.io/osindex/tradingagents-tradingweb:develop}
+    build:
+      context: .
+      dockerfile: TradingWeb/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TRADINGWEB_USERS: ${TRADINGWEB_USERS:-admin:admin}
+      TRADINGWEB_SECRET: ${TRADINGWEB_SECRET:-change-me-in-production}
+      TRADINGWEB_DB_PATH: /home/appuser/.tradingweb/tradingweb.db
+    ports:
+      - "8731:8731"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - tradingweb_data:/home/appuser/.tradingweb
+      - tradingagents_data:/home/appuser/.tradingagents
+    restart: unless-stopped
+
+volumes:
+  tradingweb_data:
+  tradingagents_data:

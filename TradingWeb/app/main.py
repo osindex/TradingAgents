@@ -1,0 +1,348 @@
+"""TradingWeb FastAPI application.
+
+Run from the TradingWeb directory:
+    uvicorn app.main:app --port 8731
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("tradingweb")
+
+_TRADINGWEB_DIR = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _TRADINGWEB_DIR.parent
+_STATIC_DIR = _TRADINGWEB_DIR / "static"
+
+# Make `import tradingagents` work without installing the package.
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+
+def _load_dotenv(path: Path) -> None:
+    """Minimal .env parser (repo does not depend on python-dotenv)."""
+    if not path.is_file():
+        return
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError as exc:
+        logger.warning("Could not read .env at %s: %s", path, exc)
+
+
+_load_dotenv(_REPO_ROOT / ".env")
+
+from . import db  # noqa: E402
+from .auth import (  # noqa: E402
+    check_credentials,
+    clear_session_cookie,
+    require_user,
+    set_session_cookie,
+)
+from .options import (  # noqa: E402
+    detect_asset_type,
+    get_model_options_payload,
+    get_options_payload,
+    known_provider_keys,
+    provider_default_base_url,
+    validate_ticker,
+)
+from .runner import initial_agent_statuses, start_run_thread  # noqa: E402
+from .schemas import (  # noqa: E402
+    CreateRunRequest,
+    CreateRunResponse,
+    LoginRequest,
+    LoginResponse,
+    RunDetailResponse,
+    RunListResponse,
+    RunSummary,
+    StepItem,
+    StepsResponse,
+)
+
+MOCK_MODE = os.environ.get("TRADINGWEB_MOCK", "").strip() in ("1", "true", "yes", "on")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_VALID_ANALYSTS = {"market", "social", "news", "fundamentals"}
+
+app = FastAPI(title="TradingWeb", docs_url=None, redoc_url=None)
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    db.init_db()
+    if MOCK_MODE:
+        logger.info("TradingWeb running in MOCK mode (TRADINGWEB_MOCK=1)")
+
+
+# ------------------------------------------------------------------- auth
+
+@app.post("/api/login", response_model=LoginResponse)
+def login(body: LoginRequest, response: Response) -> LoginResponse:
+    if not check_credentials(body.username, body.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    set_session_cookie(response, body.username)
+    return LoginResponse(username=body.username)
+
+
+@app.post("/api/logout", status_code=204)
+def logout(response: Response) -> Response:
+    response = Response(status_code=204)
+    clear_session_cookie(response)
+    return response
+
+
+@app.get("/api/me", response_model=LoginResponse)
+def me(username: str = Depends(require_user)) -> LoginResponse:
+    return LoginResponse(username=username)
+
+
+# ---------------------------------------------------------------- options
+
+@app.get("/api/options")
+def options(username: str = Depends(require_user)) -> Dict[str, Any]:
+    return get_options_payload(MOCK_MODE)
+
+
+@app.get("/api/options/models")
+def model_options(
+    provider: str = Query(...), username: str = Depends(require_user)
+) -> Dict[str, Any]:
+    return get_model_options_payload(provider)
+
+
+# ------------------------------------------------------------------- runs
+
+def _validate_run_request(body: CreateRunRequest) -> tuple[str, list[str]]:
+    """Validate; return (asset_type, ordered analyst keys). Raises 400."""
+    ticker = body.ticker.strip().upper()
+    if not validate_ticker(ticker):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid ticker: alphanumeric plus . _ - ^ only, max 32 chars",
+        )
+    if not _DATE_RE.match(body.analysis_date):
+        raise HTTPException(status_code=400, detail="analysis_date must be YYYY-MM-DD")
+    try:
+        datetime.strptime(body.analysis_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="analysis_date is not a valid date")
+
+    analysts = [a.lower() for a in body.analysts]
+    unknown = [a for a in analysts if a not in _VALID_ANALYSTS]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown analysts: {unknown}")
+    if not analysts:
+        raise HTTPException(status_code=400, detail="Select at least one analyst")
+
+    asset_type = detect_asset_type(ticker)
+    if asset_type == "crypto" and "fundamentals" in analysts:
+        raise HTTPException(
+            status_code=400,
+            detail="Fundamentals analyst is not available for crypto tickers",
+        )
+
+    if body.research_depth not in (1, 3, 5):
+        raise HTTPException(status_code=400, detail="research_depth must be 1, 3 or 5")
+
+    provider = body.llm_provider.lower()
+    if provider not in known_provider_keys():
+        raise HTTPException(status_code=400, detail=f"Unknown llm_provider: {provider}")
+
+    if not body.quick_think_llm.strip() or not body.deep_think_llm.strip():
+        raise HTTPException(status_code=400, detail="Both quick and deep models are required")
+
+    # API key presence check (real mode only; ollama needs no key).
+    if not MOCK_MODE and provider != "ollama":
+        try:
+            from tradingagents.llm_clients.api_key_env import get_api_key_env
+
+            env_var = get_api_key_env(provider)
+        except ImportError:
+            env_var = None
+        if env_var and not os.environ.get(env_var):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Missing API key for provider '{provider}': set {env_var} "
+                    "in the server environment (.env)"
+                ),
+            )
+
+    # Preserve canonical order: market, social, news, fundamentals.
+    ordered = [a for a in ("market", "social", "news", "fundamentals") if a in analysts]
+    return asset_type, ordered
+
+
+@app.post("/api/runs", status_code=201, response_model=CreateRunResponse)
+def create_run(
+    body: CreateRunRequest, username: str = Depends(require_user)
+) -> CreateRunResponse:
+    asset_type, analyst_keys = _validate_run_request(body)
+    ticker = body.ticker.strip().upper()
+    provider = body.llm_provider.lower()
+    backend_url = body.backend_url or provider_default_base_url(provider)
+
+    selections: Dict[str, Any] = body.model_dump()
+    selections["ticker"] = ticker
+    selections["llm_provider"] = provider
+    selections["backend_url"] = backend_url
+    selections["analysts"] = analyst_keys
+
+    config_summary = {
+        "llm_provider": provider,
+        "backend_url": backend_url,
+        "quick_think_llm": body.quick_think_llm,
+        "deep_think_llm": body.deep_think_llm,
+        "max_debate_rounds": body.research_depth,
+        "max_risk_discuss_rounds": body.research_depth,
+        "output_language": body.output_language,
+        "google_thinking_level": body.google_thinking_level,
+        "openai_reasoning_effort": body.openai_reasoning_effort,
+        "anthropic_effort": body.anthropic_effort,
+        "checkpoint_enabled": False,
+    }
+
+    run_id = db.create_run(
+        username=username,
+        ticker=ticker,
+        analysis_date=body.analysis_date,
+        asset_type=asset_type,
+        config=config_summary,
+        selections=selections,
+        agent_statuses=initial_agent_statuses(analyst_keys),
+    )
+    start_run_thread(run_id, username, selections, asset_type, analyst_keys, MOCK_MODE)
+    return CreateRunResponse(id=run_id)
+
+
+def _json_or_empty(raw: Optional[str]) -> Dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def _selection_field(run: Dict[str, Any], key: str) -> Optional[str]:
+    return _json_or_empty(run.get("selections_json")).get(key)
+
+
+@app.get("/api/runs", response_model=RunListResponse)
+def list_runs(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    username: str = Depends(require_user),
+) -> RunListResponse:
+    rows, total = db.list_runs(username, limit, offset)
+    runs = []
+    for row in rows:
+        sel = _json_or_empty(row.get("selections_json"))
+        runs.append(
+            RunSummary(
+                id=row["id"],
+                ticker=row["ticker"],
+                analysis_date=row["analysis_date"],
+                asset_type=row["asset_type"],
+                status=row["status"],
+                decision=row.get("decision"),
+                llm_provider=sel.get("llm_provider"),
+                deep_think_llm=sel.get("deep_think_llm"),
+                quick_think_llm=sel.get("quick_think_llm"),
+                created_at=row["created_at"],
+                finished_at=row.get("finished_at"),
+            )
+        )
+    return RunListResponse(runs=runs, total=total)
+
+
+def _get_owned_run(run_id: int, username: str) -> Dict[str, Any]:
+    run = db.get_run(run_id, username)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+
+@app.get("/api/runs/{run_id}", response_model=RunDetailResponse)
+def run_detail(run_id: int, username: str = Depends(require_user)) -> RunDetailResponse:
+    run = _get_owned_run(run_id, username)
+    return RunDetailResponse(
+        id=run["id"],
+        ticker=run["ticker"],
+        analysis_date=run["analysis_date"],
+        asset_type=run["asset_type"],
+        status=run["status"],
+        decision=run.get("decision"),
+        error=run.get("error"),
+        created_at=run["created_at"],
+        finished_at=run.get("finished_at"),
+        selections=_json_or_empty(run.get("selections_json")),
+        agent_statuses=_json_or_empty(run.get("agent_statuses_json")),
+        reports=db.get_reports(run_id),
+    )
+
+
+@app.get("/api/runs/{run_id}/steps", response_model=StepsResponse)
+def run_steps(
+    run_id: int,
+    after_id: int = Query(0, ge=0),
+    username: str = Depends(require_user),
+) -> StepsResponse:
+    run = _get_owned_run(run_id, username)
+    steps = db.get_steps(run_id, after_id=after_id, limit=500)
+    return StepsResponse(
+        steps=[StepItem(**s) for s in steps],
+        status=run["status"],
+        decision=run.get("decision"),
+        agent_statuses=_json_or_empty(run.get("agent_statuses_json")),
+        reports=db.get_reports(run_id),
+    )
+
+
+@app.delete("/api/runs/{run_id}", status_code=204)
+def remove_run(run_id: int, username: str = Depends(require_user)) -> Response:
+    if not db.delete_run(run_id, username):
+        raise HTTPException(status_code=404, detail="Run not found")
+    return Response(status_code=204)
+
+
+# ----------------------------------------------------------- static / SPA
+
+_PLACEHOLDER_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>TradingWeb</title></head>
+<body><h1>TradingWeb backend is running</h1>
+<p>The frontend has not been built yet (TradingWeb/static/index.html missing).
+The API is available under <code>/api</code>.</p></body></html>"""
+
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa_fallback(full_path: str) -> Response:
+    if full_path.startswith("api/") or full_path == "api":
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    index = _STATIC_DIR / "index.html"
+    if index.is_file():
+        return FileResponse(str(index))
+    return HTMLResponse(_PLACEHOLDER_HTML)
