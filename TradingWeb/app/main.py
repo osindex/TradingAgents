@@ -55,6 +55,7 @@ from . import db  # noqa: E402
 from .auth import (  # noqa: E402
     check_credentials,
     clear_session_cookie,
+    is_admin,
     require_user,
     set_session_cookie,
 )
@@ -67,8 +68,12 @@ from .options import (  # noqa: E402
     provider_default_base_url,
     validate_ticker,
 )
+from .runtime_paths import memory_log_path
 from .runner import initial_agent_statuses, start_run_thread  # noqa: E402
+from .runner import cancel_run  # noqa: E402
 from .schemas import (  # noqa: E402
+    BatchRunRequest,
+    BatchRunResponse,
     CreateRunRequest,
     CreateRunResponse,
     LoginRequest,
@@ -122,24 +127,27 @@ def me(username: str = Depends(require_user)) -> LoginResponse:
 @app.get("/api/options")
 def options(username: str = Depends(require_user)) -> Dict[str, Any]:
     payload = get_options_payload(MOCK_MODE)
-    payload["provider_profiles"] = [
-        {
-            "id": p["id"],
-            "name": p["name"],
-            "label": p["name"],
-            "provider_key": p["provider_key"],
-            "base_url": p.get("base_url"),
-            "api_key_env": p.get("api_key_env"),
-            "quick_think_llm": p.get("quick_think_llm"),
-            "deep_think_llm": p.get("deep_think_llm"),
-            "output_language": p.get("output_language"),
-            "google_thinking_level": p.get("google_thinking_level"),
-            "openai_reasoning_effort": p.get("openai_reasoning_effort"),
-            "anthropic_effort": p.get("anthropic_effort"),
-            "enabled": bool(p.get("enabled", 1)),
-        }
-        for p in db.list_provider_profiles()
-    ]
+    if is_admin(username):
+        payload["provider_profiles"] = [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "label": p["name"],
+                "provider_key": p["provider_key"],
+                "base_url": p.get("base_url"),
+                "api_key_env": p.get("api_key_env"),
+                "quick_think_llm": p.get("quick_think_llm"),
+                "deep_think_llm": p.get("deep_think_llm"),
+                "output_language": p.get("output_language"),
+                "google_thinking_level": p.get("google_thinking_level"),
+                "openai_reasoning_effort": p.get("openai_reasoning_effort"),
+                "anthropic_effort": p.get("anthropic_effort"),
+                "enabled": bool(p.get("enabled", 1)),
+            }
+            for p in db.list_provider_profiles()
+        ]
+    else:
+        payload["provider_profiles"] = []
     return payload
 
 
@@ -152,11 +160,15 @@ def model_options(
 
 @app.get("/api/provider-profiles")
 def provider_profiles(username: str = Depends(require_user)) -> Dict[str, Any]:
+    if not is_admin(username):
+        raise HTTPException(status_code=403, detail="Admin only")
     return {"profiles": db.list_provider_profiles()}
 
 
 @app.post("/api/provider-profiles", response_model=Dict[str, Any], status_code=201)
 def create_provider_profile(body: Dict[str, Any], username: str = Depends(require_user)) -> Dict[str, Any]:
+    if not is_admin(username):
+        raise HTTPException(status_code=403, detail="Admin only")
     profile_id = db.create_provider_profile(body)
     profile = db.get_provider_profile(profile_id)
     return profile or {"id": profile_id}
@@ -164,6 +176,8 @@ def create_provider_profile(body: Dict[str, Any], username: str = Depends(requir
 
 @app.put("/api/provider-profiles/{profile_id}")
 def update_provider_profile(profile_id: int, body: Dict[str, Any], username: str = Depends(require_user)) -> Dict[str, Any]:
+    if not is_admin(username):
+        raise HTTPException(status_code=403, detail="Admin only")
     if not db.update_provider_profile(profile_id, body):
         raise HTTPException(status_code=404, detail="Provider profile not found")
     profile = db.get_provider_profile(profile_id)
@@ -172,6 +186,8 @@ def update_provider_profile(profile_id: int, body: Dict[str, Any], username: str
 
 @app.delete("/api/provider-profiles/{profile_id}", status_code=204)
 def remove_provider_profile(profile_id: int, username: str = Depends(require_user)) -> Response:
+    if not is_admin(username):
+        raise HTTPException(status_code=403, detail="Admin only")
     if not db.delete_provider_profile(profile_id):
         raise HTTPException(status_code=404, detail="Provider profile not found")
     return Response(status_code=204)
@@ -245,6 +261,9 @@ def _validate_run_request(body: CreateRunRequest) -> tuple[str, list[str], Dict[
 
     # Preserve canonical order: market, social, news, fundamentals.
     ordered = [a for a in ("market", "social", "news", "fundamentals") if a in analysts]
+    # Non-admin users must choose from admin-managed provider profiles only.
+    if not body.provider_profile_id:
+        raise HTTPException(status_code=403, detail="provider_profile_id is required; raw provider config is admin-only")
     return asset_type, ordered, profile
 
 
@@ -284,8 +303,12 @@ def create_run(
         "google_thinking_level": body.google_thinking_level,
         "openai_reasoning_effort": body.openai_reasoning_effort,
         "anthropic_effort": body.anthropic_effort,
-        "checkpoint_enabled": False,
+        "checkpoint_enabled": bool(body.checkpoint_enabled),
     }
+    if body.checkpoint_enabled:
+        config_summary["checkpoint_dir"] = str(_REPO_ROOT / ".tradingweb" / "checkpoints")
+    if username:
+        config_summary["memory_log_path"] = str(memory_log_path(username))
 
     run_id = db.create_run(
         username=username,
@@ -298,6 +321,118 @@ def create_run(
     )
     start_run_thread(run_id, username, selections, asset_type, analyst_keys, MOCK_MODE)
     return CreateRunResponse(id=run_id)
+
+
+@app.post("/api/runs/batch", response_model=BatchRunResponse, status_code=201)
+def batch_run(body: BatchRunRequest, username: str = Depends(require_user)) -> BatchRunResponse:
+    ids: list[int] = []
+    for ticker in body.tickers:
+        single = CreateRunRequest(
+            ticker=ticker,
+            analysis_date=body.analysis_date,
+            analysts=body.analysts,
+            research_depth=body.research_depth,
+            provider_profile_id=body.provider_profile_id,
+            llm_provider=body.llm_provider,
+            backend_url=body.backend_url,
+            quick_think_llm=body.quick_think_llm,
+            deep_think_llm=body.deep_think_llm,
+            output_language=body.output_language,
+            google_thinking_level=body.google_thinking_level,
+            openai_reasoning_effort=body.openai_reasoning_effort,
+            anthropic_effort=body.anthropic_effort,
+            checkpoint_enabled=body.checkpoint_enabled,
+        )
+        resp = create_run(single, username)
+        ids.append(resp.id)
+    return BatchRunResponse(ids=ids)
+
+
+@app.post("/api/runs/{run_id}/rerun", status_code=201, response_model=CreateRunResponse)
+def rerun_with_previous_config(run_id: int, username: str = Depends(require_user)) -> CreateRunResponse:
+    run = _get_owned_run(run_id, username)
+    selections = _json_or_empty(run.get("selections_json"))
+    if not selections:
+        raise HTTPException(status_code=400, detail="Run has no stored configuration")
+    body = CreateRunRequest(**{k: v for k, v in selections.items() if k in CreateRunRequest.model_fields})
+    if not body.provider_profile_id:
+        raise HTTPException(status_code=400, detail="Cannot rerun legacy runs without provider_profile_id")
+    return create_run(body, username)
+
+
+@app.get("/api/runs/{run_id}/export")
+def export_run(run_id: int, format: str = Query("json"), username: str = Depends(require_user)) -> Response:
+    run = _get_owned_run(run_id, username)
+    if format == "json":
+        payload = {
+            "run": run,
+            "reports": db.get_reports(run_id),
+            "steps": db.get_steps(run_id),
+        }
+        return JSONResponse(payload)
+    if format == "md":
+        reports = db.get_reports(run_id)
+        lines = [f"# TradingWeb Run {run_id}", ""]
+        lines.append(f"- Ticker: {run['ticker']}")
+        lines.append(f"- Date: {run['analysis_date']}")
+        lines.append(f"- Status: {run['status']}")
+        lines.append(f"- Decision: {run.get('decision') or '—'}")
+        lines.append("")
+        for key, value in reports.items():
+            lines.append(f"## {key}")
+            lines.append(str(value or ""))
+            lines.append("")
+        return Response(content="\n".join(lines), media_type="text/markdown; charset=utf-8")
+    raise HTTPException(status_code=400, detail="format must be json or md")
+
+
+@app.get("/api/memory")
+def list_memory(username: str = Depends(require_user)) -> Dict[str, Any]:
+    path = memory_log_path(username)
+    if not path.exists():
+        return {"path": str(path), "entries": []}
+    try:
+        from tradingagents.agents.utils.memory import TradingMemoryLog
+
+        log = TradingMemoryLog({"memory_log_path": str(path)})
+        return {"path": str(path), "entries": log.load_entries()}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to read memory: {exc}") from exc
+
+
+@app.delete("/api/memory", status_code=204)
+def clear_memory(username: str = Depends(require_user)) -> Response:
+    path = memory_log_path(username)
+    if path.exists():
+        path.unlink()
+    return Response(status_code=204)
+
+
+@app.get("/api/checkpoints")
+def checkpoint_info(username: str = Depends(require_user)) -> Dict[str, Any]:
+    if not is_admin(username):
+        raise HTTPException(status_code=403, detail="Admin only")
+    cp_root = _REPO_ROOT / ".tradingweb" / "checkpoints"
+    if not cp_root.exists():
+        return {"directory": str(cp_root), "files": []}
+    files = sorted(str(p) for p in cp_root.glob("*.db"))
+    return {"directory": str(cp_root), "files": files}
+
+
+@app.delete("/api/checkpoints", status_code=204)
+def clear_checkpoints(username: str = Depends(require_user)) -> Response:
+    if not is_admin(username):
+        raise HTTPException(status_code=403, detail="Admin only")
+    cp_root = _REPO_ROOT / ".tradingweb" / "checkpoints"
+    if cp_root.exists():
+        for p in cp_root.glob("*.db"):
+            p.unlink()
+    return Response(status_code=204)
+
+
+@app.get("/api/batch")
+def batch_placeholder(username: str = Depends(require_user)) -> Dict[str, Any]:
+    return {"status": "available", "note": "Use /api/runs/batch"}
 
 
 def _json_or_empty(raw: Optional[str]) -> Dict[str, Any]:
@@ -320,13 +455,14 @@ def list_runs(
     offset: int = Query(0, ge=0),
     username: str = Depends(require_user),
 ) -> RunListResponse:
-    rows, total = db.list_runs(username, limit, offset)
+    rows, total = db.list_runs(None if is_admin(username) else username, limit, offset)
     runs = []
     for row in rows:
         sel = _json_or_empty(row.get("selections_json"))
         runs.append(
             RunSummary(
                 id=row["id"],
+                username=row.get("username"),
                 ticker=row["ticker"],
                 analysis_date=row["analysis_date"],
                 asset_type=row["asset_type"],
@@ -345,7 +481,7 @@ def list_runs(
 
 
 def _get_owned_run(run_id: int, username: str) -> Dict[str, Any]:
-    run = db.get_run(run_id, username)
+    run = db.get_run(run_id, None if is_admin(username) else username)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
@@ -356,6 +492,7 @@ def run_detail(run_id: int, username: str = Depends(require_user)) -> RunDetailR
     run = _get_owned_run(run_id, username)
     return RunDetailResponse(
         id=run["id"],
+        username=run.get("username"),
         ticker=run["ticker"],
         analysis_date=run["analysis_date"],
         asset_type=run["asset_type"],
@@ -391,8 +528,18 @@ def run_steps(
 
 @app.delete("/api/runs/{run_id}", status_code=204)
 def remove_run(run_id: int, username: str = Depends(require_user)) -> Response:
-    if not db.delete_run(run_id, username):
+    if not db.delete_run(run_id, None if is_admin(username) else username):
         raise HTTPException(status_code=404, detail="Run not found")
+    return Response(status_code=204)
+
+
+@app.post("/api/runs/{run_id}/cancel", status_code=204)
+def cancel_existing_run(run_id: int, username: str = Depends(require_user)) -> Response:
+    run = _get_owned_run(run_id, username)
+    if run["status"] not in ("pending", "running"):
+        return Response(status_code=204)
+    cancel_run(run_id)
+    db.update_run(run_id, status="error", error="Run cancelled by user", finished_at=db.utc_now_iso())
     return Response(status_code=204)
 
 

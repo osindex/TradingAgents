@@ -126,3 +126,7 @@ def require_user(request: Request) -> str:
     if username is None:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
     return username
+
+
+def is_admin(username: str) -> bool:
+    return username == "admin"

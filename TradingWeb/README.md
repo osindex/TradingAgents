@@ -202,14 +202,14 @@ echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password
 
 ```bash
 cd TradingWeb
-python -m app.launcher --profile "OpenAI"
+python -m app.launcher --profile "OpenAI" --username admin
 ```
 
 或者按 profile id：
 
 ```bash
 cd TradingWeb
-python -m app.launcher --profile-id 1
+python -m app.launcher --profile-id 1 --username admin
 ```
 
 它会从 SQLite 里读取 profile，并在**子进程 env** 中注入：
@@ -219,6 +219,7 @@ python -m app.launcher --profile-id 1
 - `TRADINGAGENTS_QUICK_THINK_LLM`
 - `TRADINGAGENTS_DEEP_THINK_LLM`
 - `TRADINGAGENTS_OUTPUT_LANGUAGE`
+- `TRADINGAGENTS_MEMORY_LOG_PATH`
 
 这样不会污染当前进程，也不会改 CLI 源码。
 
@@ -228,6 +229,17 @@ python -m app.launcher --profile-id 1
 cd TradingWeb
 python -m app.launcher --profile "OpenAI" -- --help
 ```
+
+### 按用户隔离决策记忆
+
+原框架的决策记忆默认是共享的 markdown 文件。TradingWeb 不改原框架源码，而是在 Web/launcher 这一层按登录用户注入独立的 `TRADINGAGENTS_MEMORY_LOG_PATH`，例如：
+
+```text
+TradingWeb/data/memory/admin/trading_memory.md
+TradingWeb/data/memory/alice/trading_memory.md
+```
+
+这样每个用户看到的是自己的历史记忆，不会互相污染；CLI 继续保持原有逻辑，只是运行时拿到不同的进程环境变量。
 
 ### 使用独立 compose（推荐）
 
@@ -308,6 +320,39 @@ Web 新增了“接入商管理”页，可以直接管理 SQLite 里的 provide
 - 启用/禁用
 
 新建分析时，优先从 profile 读取配置；如果 profile 里已经配置了模型和网关，向导里只需选择 profile 即可。
+
+> 权限说明：接入商配置仅 **admin** 可见/可改；普通用户只会看到自己的历史记录和运行详情。
+
+### CLI → Web 能力优先级（建议实现顺序）
+
+1. **历史查询与查看详情**：Web 已有 run 列表、run detail、steps 日志。
+2. **checkpoint 恢复 / 清理**：把 CLI 的 `--checkpoint` / `--clear-checkpoints` 做成按钮和开关。
+3. **用户隔离记忆**：当前已通过 `TRADINGAGENTS_MEMORY_LOG_PATH` 按用户隔离。
+4. **运行重放 / 复制配置**：一键用历史 run 的配置重新发起分析。
+5. **结果导出**：导出 Markdown、JSON、日志包。
+6. **批量运行 / 队列 / 定时任务**：更高阶的 CLI 扩展。
+
+其中，**admin 可以查看全部策略/所有用户的运行记录**；普通用户只能看到自己的 run。provider 配置页与 checkpoint 管理也仅对 admin 开放；普通用户只能使用 admin 已配置好的 profile。
+
+### 已在 Web 中补齐的 CLI 能力按钮
+
+- **复制并重跑**：在 run 详情页和历史列表都可一键复用当前配置重新发起分析。
+- **导出结果**：支持导出 JSON；run 详情页还可导出 Markdown。
+- **checkpoint 管理**：仅 admin 可查询和清理 checkpoint。
+- **记忆管理**：可查看并清理当前用户的 memory log。
+- **中止运行**：运行中可在详情页直接取消。
+- **批量运行**：历史页已接到 `POST /api/runs/batch`。
+
+### 还可以继续扩展的 CLI 能力
+
+- 批量队列 / 调度
+- 定时运行
+- 更细的 checkpoint 恢复点展示
+- 记忆检索和标签化
+
+### 当前的批量运行说明
+
+Web 已提供批量运行入口，并且后端已接到 `POST /api/runs/batch`。当前 UI 是最小可用版本；如果要真正做“队列/并发控制”，后续可以再接专门的批量任务页。
 
 ### 手动 docker build/run
 

@@ -30,6 +30,8 @@ export function render(root, id) {
   let stepCount = 0;
   let feedHover = false;
   let renderedTabContent = {}; // tab key -> 已渲染的原始 md（避免重复渲染）
+  let checkpointInfo = null;
+  let memoryInfo = null;
 
   root.innerHTML = skeletonHtml(5);
 
@@ -57,9 +59,11 @@ export function render(root, id) {
     renderTabs();
     renderTabContent();
     renderErrorBlock();
+    renderActionBar();
     // 拉取日志：进行中的任务进入轮询；已结束的任务只拉一次
     if (isActive()) schedulePoll(0);
     else fetchStepsOnce();
+    loadAuxInfo();
   }
 
   function isActive() {
@@ -89,6 +93,7 @@ export function render(root, id) {
           <span id="offline-banner" class="badge badge-amber hidden"><span class="dot pulse"></span>连接中断，正在重试…</span>
         </div>
         <div id="run-error-block"></div>
+        <div id="run-action-bar"></div>
         <div class="run-layout">
           <aside class="card agent-board">
             <h3 class="panel-title">智能体状态</h3>
@@ -124,6 +129,93 @@ export function render(root, id) {
     const feed = root.querySelector('#log-feed');
     feed.addEventListener('mouseenter', () => { feedHover = true; });
     feed.addEventListener('mouseleave', () => { feedHover = false; });
+  }
+
+  async function loadAuxInfo() {
+    try {
+      const [cp, mem] = await Promise.all([
+        api('/api/checkpoints'),
+        api('/api/memory'),
+      ]);
+      checkpointInfo = cp;
+      memoryInfo = mem;
+      renderActionBar();
+    } catch (e) {
+      checkpointInfo = null;
+      memoryInfo = null;
+    }
+  }
+
+  function renderActionBar() {
+    const box = root.querySelector('#run-action-bar');
+    if (!box) return;
+    const cpCount = checkpointInfo && checkpointInfo.files ? checkpointInfo.files.length : 0;
+    const memPath = memoryInfo && memoryInfo.path ? memoryInfo.path : '';
+    const checkpointEnabled = run && run.selections ? !!run.selections.checkpoint_enabled : false;
+    const cpList = checkpointInfo && checkpointInfo.files && checkpointInfo.files.length
+      ? `<div class="action-meta mono">${checkpointInfo.files.map((f) => esc(f)).join('<br>')}</div>` : '';
+    const memMeta = memPath ? `<div class="action-meta mono">${esc(memPath)}</div>` : '';
+    box.innerHTML = `
+      <div class="card action-bar">
+        <div class="action-bar-left">
+          <span class="badge badge-grey">Checkpoint: ${checkpointEnabled ? '已开启' : '未开启'}</span>
+          <span class="badge badge-grey">Checkpoint: ${cpCount > 0 ? '可用' : '无'}</span>
+          <span class="badge badge-grey">Memory: ${memPath ? '已隔离' : '未知'}</span>
+        </div>
+        <div class="action-bar-right">
+          <button class="btn btn-sm btn-danger" id="btn-cancel">中止运行</button>
+          <button class="btn btn-sm" id="btn-rerun">复制并重跑</button>
+          <button class="btn btn-sm" id="btn-export-json">导出 JSON</button>
+          <button class="btn btn-sm" id="btn-export-md">导出 MD</button>
+          <button class="btn btn-sm" id="btn-clear-cp">清理 checkpoint</button>
+          <button class="btn btn-sm" id="btn-clear-mem">清理记忆</button>
+        </div>
+        ${cpList}
+        ${memMeta}
+      </div>`;
+    box.querySelector('#btn-cancel')?.addEventListener('click', onCancel);
+    box.querySelector('#btn-rerun')?.addEventListener('click', onRerun);
+    box.querySelector('#btn-export-json')?.addEventListener('click', () => exportRun('json'));
+    box.querySelector('#btn-export-md')?.addEventListener('click', () => exportRun('md'));
+    box.querySelector('#btn-clear-cp')?.addEventListener('click', clearCheckpoints);
+    box.querySelector('#btn-clear-mem')?.addEventListener('click', clearMemory);
+  }
+
+  async function onRerun() {
+    if (!confirm('基于当前配置重新发起一次分析？')) return;
+    const d = await api(`/api/runs/${encodeURIComponent(id)}/rerun`, { method: 'POST' });
+    location.hash = `#/runs/${d.id}`;
+  }
+
+  async function onCancel() {
+    if (!confirm('中止当前运行？')) return;
+    await api(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+    await loadAuxInfo();
+    location.reload();
+  }
+
+  async function exportRun(format) {
+    const url = `/api/runs/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`;
+    const res = await fetch(url, { credentials: 'same-origin' });
+    const text = await res.text();
+    const blob = new Blob([text], { type: format === 'json' ? 'application/json' : 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `run-${id}.${format === 'json' ? 'json' : 'md'}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  async function clearCheckpoints() {
+    if (!confirm('清理所有 checkpoint？')) return;
+    await api('/api/checkpoints', { method: 'DELETE' });
+    await loadAuxInfo();
+  }
+
+  async function clearMemory() {
+    if (!confirm('清理当前用户的记忆文件？')) return;
+    await api('/api/memory', { method: 'DELETE' });
+    await loadAuxInfo();
   }
 
   /* ============ 局部渲染 ============ */

@@ -48,6 +48,7 @@ export function render(root) {
         <tr data-id="${esc(String(r.id))}">
           <td class="cell-ticker">${esc(r.ticker)}${r.asset_type === 'crypto' ? '<span class="crypto-badge">加密</span>' : ''}</td>
           <td class="cell-dim mono">${esc(r.analysis_date)}</td>
+          <td class="cell-owner">${esc(r.username || '—')}</td>
           <td class="cell-model">${esc(r.provider_profile_name || r.llm_provider || '—')} / <span class="mono">${esc(r.deep_think_llm || '—')}</span></td>
           <td>${statusBadge(r.status)}</td>
           <td>${r.decision ? decisionBadge(r.decision) : '<span class="cell-dim">—</span>'}</td>
@@ -55,6 +56,8 @@ export function render(root) {
           <td class="cell-dim mono">${esc(fmtDuration(r.created_at, r.finished_at))}</td>
           <td class="cell-actions">
             <button class="btn btn-sm btn-ghost act-view" data-id="${esc(String(r.id))}">查看</button>
+            <button class="btn btn-sm act-rerun" data-id="${esc(String(r.id))}">重跑</button>
+            <button class="btn btn-sm act-export" data-id="${esc(String(r.id))}">导出</button>
             <button class="btn btn-sm btn-danger act-del" data-id="${esc(String(r.id))}">删除</button>
           </td>
         </tr>`).join('');
@@ -62,7 +65,7 @@ export function render(root) {
         <div class="card table-card view-enter">
           <table class="runs-table">
             <thead><tr>
-              <th>标的</th><th>分析日期</th><th>厂商 / 深度模型</th><th>状态</th>
+              <th>标的</th><th>分析日期</th><th>用户</th><th>厂商 / 深度模型</th><th>状态</th>
               <th>决策</th><th>创建时间</th><th>耗时</th><th style="text-align:right">操作</th>
             </tr></thead>
             <tbody>${rows}</tbody>
@@ -77,6 +80,9 @@ export function render(root) {
 
     root.innerHTML = `<div class="view-enter">
       <h1 class="page-title"><span class="accent-bar"></span>历史记录</h1>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn btn-sm" id="btn-batch">批量运行</button>
+      </div>
       <div id="hist-error"></div>
       ${bodyHtml}</div>`;
 
@@ -92,12 +98,65 @@ export function render(root) {
     });
     root.querySelectorAll('.act-view').forEach((b) =>
       b.addEventListener('click', () => { location.hash = `#/runs/${b.dataset.id}`; }));
+    root.querySelectorAll('.act-rerun').forEach((b) =>
+      b.addEventListener('click', () => onRerun(b)));
+    root.querySelectorAll('.act-export').forEach((b) =>
+      b.addEventListener('click', () => onExport(b)));
     root.querySelectorAll('.act-del').forEach((b) =>
       b.addEventListener('click', () => onDelete(b)));
     const prev = root.querySelector('#pg-prev');
     const next = root.querySelector('#pg-next');
+    const batch = root.querySelector('#btn-batch');
     if (prev) prev.addEventListener('click', () => { offset = Math.max(0, offset - LIMIT); load(); });
     if (next) next.addEventListener('click', () => { offset += LIMIT; load(); });
+    if (batch) batch.addEventListener('click', onBatchRun);
+  }
+
+  async function onBatchRun() {
+    const tickersRaw = window.prompt('请输入批量 ticker（每行一个）', 'SPY\nAAPL');
+    if (!tickersRaw) return;
+    const tickers = tickersRaw.split(/\r?\n/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+    if (!tickers.length) return;
+    const body = {
+      tickers,
+      analysis_date: new Date().toISOString().slice(0, 10),
+      analysts: ['market'],
+      research_depth: 1,
+      provider_profile_id: null,
+      llm_provider: 'openai',
+      backend_url: '',
+      quick_think_llm: 'gpt-5.4-mini',
+      deep_think_llm: 'gpt-5.5',
+      output_language: 'Chinese',
+      checkpoint_enabled: false,
+    };
+    const resp = await api('/api/runs/batch', { method: 'POST', body });
+    if (resp && resp.ids && resp.ids.length) {
+      location.hash = `#/runs/${resp.ids[0]}`;
+    }
+  }
+
+  async function onRerun(btn) {
+    btn.disabled = true;
+    btn.textContent = '重跑中…';
+    try {
+      const d = await api(`/api/runs/${encodeURIComponent(btn.dataset.id)}/rerun`, { method: 'POST' });
+      location.hash = `#/runs/${d.id}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '重跑';
+    }
+  }
+
+  async function onExport(btn) {
+    const res = await fetch(`/api/runs/${encodeURIComponent(btn.dataset.id)}/export?format=json`, { credentials: 'same-origin' });
+    const text = await res.text();
+    const blob = new Blob([text], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `run-${btn.dataset.id}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   async function onDelete(btn) {

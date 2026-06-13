@@ -9,15 +9,26 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import traceback
 from typing import Any, Dict, List, Optional
 
 from . import db
+from .runtime_paths import checkpoint_dir, memory_log_path
 from .options import ANALYST_AGENT_LABELS, REPORT_SECTIONS
 
 logger = logging.getLogger("tradingweb.runner")
+_CANCELLED_RUNS: set[int] = set()
+
+
+def cancel_run(run_id: int) -> None:
+    _CANCELLED_RUNS.add(run_id)
+
+
+def is_cancelled(run_id: int) -> bool:
+    return run_id in _CANCELLED_RUNS
 
 REPORT_TO_AGENT = {
     "market_report": "Market Analyst",
@@ -174,7 +185,13 @@ def build_config(selections: Dict[str, Any]) -> Dict[str, Any]:
     config["google_thinking_level"] = selections.get("google_thinking_level")
     config["openai_reasoning_effort"] = selections.get("openai_reasoning_effort")
     config["anthropic_effort"] = selections.get("anthropic_effort")
-    config["checkpoint_enabled"] = False
+    config["checkpoint_enabled"] = bool(selections.get("checkpoint_enabled", False))
+    # Web-side per-user memory isolation: keep the upstream framework unchanged,
+    # but give each login user a distinct append-only memory log file.
+    username = selections.get("username")
+    if username:
+        config["memory_log_path"] = str(memory_log_path(str(username)))
+    config["checkpoint_dir"] = str(checkpoint_dir())
     return config
 
 
@@ -295,6 +312,8 @@ def _run_real(
 
     final_state: Dict[str, Any] = {}
     for chunk in graph.graph.stream(state, **args):
+        if is_cancelled(rec.run_id):
+            raise RuntimeError("Run cancelled by user")
         _process_chunk(rec, chunk)
         final_state.update(chunk)
 
@@ -345,6 +364,8 @@ def _run_mock(
         "fundamentals": ("fundamentals_report", "Fundamentals Analysis"),
     }
     for key in analyst_keys:
+        if is_cancelled(rec.run_id):
+            raise RuntimeError("Run cancelled by user")
         agent = ANALYST_AGENT_LABELS[key]
         section, title = analyst_sections[key]
         rec.set_status(agent, "in_progress")
@@ -357,6 +378,8 @@ def _run_mock(
 
     # Research team.
     for agent in RESEARCH_TEAM:
+        if is_cancelled(rec.run_id):
+            raise RuntimeError("Run cancelled by user")
         rec.set_status(agent, "in_progress")
     rec.message("Bull Researcher", f"Bull case: {ticker} momentum looks constructive.")
     rec.append_report("investment_plan", "Bull Researcher Analysis", f"Mock bull thesis for {ticker}.")

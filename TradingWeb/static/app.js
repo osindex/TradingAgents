@@ -26,6 +26,7 @@ function renderNavbar() {
     return;
   }
   navbar.classList.remove('hidden');
+  const isAdmin = state.user === 'admin';
   navbar.innerHTML = `
     <a class="brand" href="#/new">
       <span class="brand-mark">TA</span>
@@ -33,7 +34,7 @@ function renderNavbar() {
     </a>
     <nav class="nav-links">
       <a class="nav-link" data-route="new" href="#/new">新建分析</a>
-      <a class="nav-link" data-route="profiles" href="#/profiles">接入商管理</a>
+      ${isAdmin ? '<a class="nav-link" data-route="profiles" href="#/profiles">接入商管理</a>' : ''}
       <a class="nav-link" data-route="runs" href="#/runs">历史记录</a>
     </nav>
     <span class="nav-spacer"></span>
@@ -48,7 +49,7 @@ function highlightNav() {
   navbar.querySelectorAll('.nav-link').forEach((a) => {
     const r = a.dataset.route;
     const active = (r === 'new' && hash.startsWith('#/new'))
-      || (r === 'profiles' && hash.startsWith('#/profiles'))
+      || (r === 'profiles' && hash.startsWith('#/profiles') && state.user === 'admin')
       || (r === 'runs' && hash.startsWith('#/runs'));
     a.classList.toggle('active', active);
   });

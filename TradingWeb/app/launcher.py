@@ -21,6 +21,7 @@ if __name__ == "__main__":
         sys.path.insert(0, str(_REPO_ROOT))
 
 from . import db  # noqa: E402
+from .runtime_paths import memory_log_path  # noqa: E402
 
 
 def _load_profile(profile_id: Optional[int], profile_name: Optional[str]) -> Dict[str, Any]:
@@ -44,6 +45,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Launch TradingAgents CLI using a stored provider profile")
     parser.add_argument("--profile-id", type=int, default=None, help="SQLite provider profile id")
     parser.add_argument("--profile", default=None, help="SQLite provider profile name")
+    parser.add_argument("--username", default=None, help="TradingWeb username used to isolate memory logs")
     parser.add_argument("--", dest="separator", action="store_true")
     parser.add_argument("remainder", nargs=argparse.REMAINDER, help="Arguments passed to tradingagents CLI")
     args = parser.parse_args(argv)
@@ -73,6 +75,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         env["TRADINGAGENTS_OPENAI_REASONING_EFFORT"] = profile["openai_reasoning_effort"]
     if profile.get("anthropic_effort"):
         env["TRADINGAGENTS_ANTHROPIC_EFFORT"] = profile["anthropic_effort"]
+
+    username = args.username or os.environ.get("TRADINGWEB_USERNAME")
+    if username:
+        env["TRADINGAGENTS_MEMORY_LOG_PATH"] = str(memory_log_path(username))
 
     cmd = ["tradingagents"]
     if args.remainder:

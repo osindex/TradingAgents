@@ -192,38 +192,55 @@ def set_agent_statuses(run_id: int, statuses: Dict[str, str]) -> None:
     update_run(run_id, agent_statuses_json=json.dumps(statuses))
 
 
-def get_run(run_id: int, username: str) -> Optional[Dict[str, Any]]:
+def get_run(run_id: int, username: Optional[str] = None) -> Optional[Dict[str, Any]]:
     conn = connect()
     try:
-        row = conn.execute(
-            "SELECT * FROM runs WHERE id = ? AND username = ?", (run_id, username)
-        ).fetchone()
+        if username is None:
+            row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM runs WHERE id = ? AND username = ?", (run_id, username)
+            ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
-def list_runs(username: str, limit: int, offset: int) -> tuple[List[Dict[str, Any]], int]:
+def list_runs(
+    username: Optional[str],
+    limit: int,
+    offset: int,
+) -> tuple[List[Dict[str, Any]], int]:
     conn = connect()
     try:
-        total = conn.execute(
-            "SELECT COUNT(*) FROM runs WHERE username = ?", (username,)
-        ).fetchone()[0]
-        rows = conn.execute(
-            "SELECT * FROM runs WHERE username = ? ORDER BY id DESC LIMIT ? OFFSET ?",
-            (username, limit, offset),
-        ).fetchall()
+        if username is None:
+            total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+            rows = conn.execute(
+                "SELECT * FROM runs ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        else:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM runs WHERE username = ?", (username,)
+            ).fetchone()[0]
+            rows = conn.execute(
+                "SELECT * FROM runs WHERE username = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                (username, limit, offset),
+            ).fetchall()
         return [dict(r) for r in rows], int(total)
     finally:
         conn.close()
 
 
-def delete_run(run_id: int, username: str) -> bool:
+def delete_run(run_id: int, username: Optional[str] = None) -> bool:
     conn = connect()
     try:
-        cur = conn.execute(
-            "DELETE FROM runs WHERE id = ? AND username = ?", (run_id, username)
-        )
+        if username is None:
+            cur = conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        else:
+            cur = conn.execute(
+                "DELETE FROM runs WHERE id = ? AND username = ?", (run_id, username)
+            )
         if cur.rowcount == 0:
             conn.commit()
             return False

@@ -30,6 +30,7 @@ class CreateRunRequest(BaseModel):
     google_thinking_level: Optional[str] = None
     openai_reasoning_effort: Optional[str] = None
     anthropic_effort: Optional[str] = None
+    checkpoint_enabled: bool = False
 
 
 class CreateRunResponse(BaseModel):
@@ -38,6 +39,7 @@ class CreateRunResponse(BaseModel):
 
 class RunSummary(BaseModel):
     id: int
+    username: Optional[str] = None
     ticker: str
     analysis_date: str
     asset_type: str
@@ -59,6 +61,7 @@ class RunListResponse(BaseModel):
 
 class RunDetailResponse(BaseModel):
     id: int
+    username: Optional[str] = None
     ticker: str
     analysis_date: str
     asset_type: str
@@ -72,6 +75,8 @@ class RunDetailResponse(BaseModel):
     selections: Dict[str, Any] = Field(default_factory=dict)
     agent_statuses: Dict[str, str] = Field(default_factory=dict)
     reports: Dict[str, str] = Field(default_factory=dict)
+    checkpoint_enabled: bool = False
+    memory_log_path: Optional[str] = None
 
 
 class ProviderProfileBase(BaseModel):
@@ -127,3 +132,24 @@ class StepsResponse(BaseModel):
     decision: Optional[str] = None
     agent_statuses: Dict[str, str] = Field(default_factory=dict)
     reports: Dict[str, str] = Field(default_factory=dict)
+
+
+class BatchRunRequest(BaseModel):
+    tickers: List[str]
+    analysis_date: str
+    analysts: List[str]
+    research_depth: int
+    provider_profile_id: Optional[int] = None
+    llm_provider: str
+    backend_url: Optional[str] = None
+    quick_think_llm: str
+    deep_think_llm: str
+    output_language: str = "English"
+    google_thinking_level: Optional[str] = None
+    openai_reasoning_effort: Optional[str] = None
+    anthropic_effort: Optional[str] = None
+    checkpoint_enabled: bool = False
+
+
+class BatchRunResponse(BaseModel):
+    ids: List[int]
