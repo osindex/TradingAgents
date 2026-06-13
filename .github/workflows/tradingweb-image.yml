@@ -101,6 +101,11 @@ jobs:
           context: .
           file: TradingWeb/Dockerfile
           target: web
+          # Reuse the already-published cli image as the web base (B-2):
+          # this skips rebuilding the TradingAgents core and re-running
+          # `pip install .`, so web/tag builds are fast.
+          build-args: |
+            CLI_IMAGE=${{ env.REGISTRY }}/osindex/tradingagents-cli:cli
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-web.outputs.tags }}

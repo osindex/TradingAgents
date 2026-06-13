@@ -128,7 +128,7 @@ cp .env.example .env  # add your API keys
 docker compose run --rm tradingagents
 ```
 
-TradingWeb now uses a staged build: a cached TradingAgents/CLI base image layer and a thin Web layer on top. That means CLI dependencies and framework code are reused across builds, so changes under `TradingWeb/` don't need to rebuild the entire CLI stack every time.
+TradingWeb's image is built directly on top of an already-published CLI image (`ghcr.io/osindex/tradingagents-cli:cli`) via the `CLI_IMAGE` build-arg, rather than rebuilding the TradingAgents core and re-running `pip install .` each time. The web build only layers the TradingWeb dependencies and source on top, so `main`/tag web builds are fast. Local `docker compose ... --build` defaults `CLI_IMAGE` to the in-tree `cli` stage, so it stays self-contained. Note this version-locks the web image to the cli image: change core `tradingagents/` logic → republish the cli image first, then the web build picks it up.
 
 If you want to run the CLI and Web as two separate containers, use `docker-compose.mix.yml`. In that mode, the two services share the same data volumes (SQLite, memory, checkpoints, results) and communicate through the agreed file/database contract instead of importing each other.
 

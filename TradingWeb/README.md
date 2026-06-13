@@ -193,14 +193,26 @@ docker pull --platform linux/amd64 ghcr.io/osindex/tradingagents-tradingweb:main
 
 但更推荐等 workflow 发布了 `linux/amd64` + `linux/arm64` 双架构镜像后再直接拉取，这样就不需要手工指定平台了。
 
-### 分阶段构建说明
+### 构建复用说明（web 镜像直接基于已发布的 cli 镜像）
 
-TradingWeb 镜像现在采用分阶段构建：
+为了让 `main` / `v*` tag 的 web 构建足够快，web 镜像**不再重建 TradingAgents 核心、也不再重跑 `pip install .`**。它直接 `FROM` 一个已发布的 cli 镜像，只在上面叠加 TradingWeb 的依赖与源码。
 
-- **CLI 基础层**：安装 TradingAgents 核心代码和依赖
-- **Web 扩展层**：只安装 TradingWeb 的额外依赖并拷贝 Web 源码
+构建来源由 `CLI_IMAGE` 这个 build-arg 控制：
 
-这样在大多数情况下，改 TradingWeb 前端/后端只会重建上层，不会把原 CLI 依赖整层重装。只有当 `tradingagents/`、`cli/`、`pyproject.toml` 或 `uv.lock` 变化时，基础层才会重建。
+- **本地构建**（`docker compose ... --build`）：默认值是仓库内的 `cli` stage，所以本地构建是自包含的，不需要额外参数。
+- **CI 的 web / tag 构建**：workflow 会传
+  `--build-arg CLI_IMAGE=ghcr.io/osindex/tradingagents-cli:cli`，
+  直接复用已发布的 cli 镜像，从而跳过最慢的核心安装步骤。
+
+手动构建复用已发布 cli 镜像的示例：
+
+```bash
+docker build -f TradingWeb/Dockerfile --target web \
+  --build-arg CLI_IMAGE=ghcr.io/osindex/tradingagents-cli:cli \
+  -t tradingagents-web .
+```
+
+> **版本绑定约束（已确认接受）**：web 镜像与它所基于的 cli 镜像版本强绑定。一旦修改了核心 `tradingagents/` 逻辑，必须**先重新发布 cli 镜像**（`cli` 分支构建），web 再基于新的 cli 镜像构建才能带上改动。换句话说，改 cli，web 会跟着更新；不考虑 web 落后于 cli 的情况。
 
 双镜像由同一份 workflow 管理，但按分支与标签规则分离构建：
 
