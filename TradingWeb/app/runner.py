@@ -16,7 +16,7 @@ import traceback
 from typing import Any, Dict, List, Optional
 
 from . import db
-from .runtime_paths import checkpoint_dir, memory_log_path, user_cache_dir
+from .runtime_paths import checkpoint_base, checkpoint_dir, memory_log_path
 from .options import ANALYST_AGENT_LABELS, REPORT_SECTIONS
 
 logger = logging.getLogger("tradingweb.runner")
@@ -192,17 +192,19 @@ def build_config(selections: Dict[str, Any]) -> Dict[str, Any]:
     config["openai_reasoning_effort"] = selections.get("openai_reasoning_effort")
     config["anthropic_effort"] = selections.get("anthropic_effort")
     config["checkpoint_enabled"] = bool(selections.get("checkpoint_enabled", False))
-    # Web-side per-user isolation: keep the upstream framework unchanged, but
-    # give each login user distinct paths so users never share memory or
-    # checkpoints with each other.
+    # Web-side per-user isolation, but with a deliberate split:
+    #   * memory + checkpoints are per-user (private to each login user)
+    #   * market-data cache (data_cache_dir) stays SHARED across users
+    #
+    # Market data (OHLCV/indicators) is identical for everyone, so the
+    # framework's CSV cache under data_cache_dir should be reused globally to
+    # cut duplicate yfinance fetches and rate-limit pressure. We therefore do
+    # NOT redirect data_cache_dir per user. Checkpoints are isolated via a
+    # dedicated per-user directory that the web runner wires into the graph
+    # explicitly (see _attach_checkpointer), independent of data_cache_dir.
     username = selections.get("username")
     if username:
         config["memory_log_path"] = str(memory_log_path(str(username)))
-        # The framework derives its checkpoint dir from data_cache_dir
-        # (<data_cache_dir>/checkpoints/<TICKER>.db). Point each user at their
-        # own cache dir so checkpoints are isolated per user without touching
-        # framework source.
-        config["data_cache_dir"] = str(user_cache_dir(str(username)))
         config["checkpoint_dir"] = str(checkpoint_dir(str(username)))
     else:
         config["checkpoint_dir"] = str(checkpoint_dir())
@@ -320,18 +322,64 @@ def _run_real(
     )
     args = graph.propagator.get_graph_args()
 
+    # The web runner streams the graph directly (instead of graph.propagate),
+    # so it must wire the checkpointer itself when the user enabled it. We mirror
+    # what propagate() does, but against this user's isolated checkpoint base so
+    # resumable state never mixes between users.
+    checkpoint_ctx = None
+    if config.get("checkpoint_enabled"):
+        from tradingagents.graph.checkpointer import (
+            get_checkpointer,
+            checkpoint_step,
+            thread_id,
+        )
+
+        username = selections.get("username")
+        cp_base = str(checkpoint_base(str(username)) if username else checkpoint_base())
+        checkpoint_ctx = get_checkpointer(cp_base, ticker)
+        saver = checkpoint_ctx.__enter__()
+        graph.graph = graph.workflow.compile(checkpointer=saver)
+        tid = thread_id(ticker, str(analysis_date))
+        args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = tid
+        resumed_step = checkpoint_step(cp_base, ticker, str(analysis_date))
+        if resumed_step is not None:
+            rec.info(f"Resuming from checkpoint step {resumed_step} for {ticker} {analysis_date}")
+        else:
+            rec.info(f"Checkpoint enabled; starting fresh for {ticker} {analysis_date}")
+
     first_analyst = ANALYST_AGENT_LABELS[analyst_keys[0]]
     rec.set_status(first_analyst, "in_progress")
     rec.info(f"Analyzing {ticker} on {analysis_date}...")
 
     final_state: Dict[str, Any] = {}
-    for chunk in graph.graph.stream(state, **args):
-        if is_cancelled(rec.run_id):
-            raise RuntimeError("Run cancelled by user")
-        _process_chunk(rec, chunk)
-        final_state.update(chunk)
+    try:
+        for chunk in graph.graph.stream(state, **args):
+            if is_cancelled(rec.run_id):
+                raise RuntimeError("Run cancelled by user")
+            _process_chunk(rec, chunk)
+            final_state.update(chunk)
+    finally:
+        if checkpoint_ctx is not None:
+            # On success, clear the checkpoint so a completed run doesn't leave
+            # stale resumable state behind (matches framework behavior). On
+            # failure/cancel, intentionally KEEP it so the run can be resumed.
+            try:
+                checkpoint_ctx.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001 - cleanup must not mask the real error
+                logger.exception("[run %s] checkpoint cleanup failed", rec.run_id)
 
     decision = graph.process_signal(final_state["final_trade_decision"])
+
+    if config.get("checkpoint_enabled"):
+        # Successful completion: drop this thread's checkpoint rows.
+        try:
+            from tradingagents.graph.checkpointer import clear_checkpoint
+
+            username = selections.get("username")
+            cp_base = str(checkpoint_base(str(username)) if username else checkpoint_base())
+            clear_checkpoint(cp_base, ticker, str(analysis_date))
+        except Exception:  # noqa: BLE001 - non-fatal cleanup
+            logger.exception("[run %s] clearing completed checkpoint failed", rec.run_id)
 
     # Final report sections from merged state.
     for section in REPORT_SECTIONS:

@@ -27,30 +27,30 @@ def memory_log_path(username: str) -> Path:
 
 
 def checkpoint_root() -> Path:
-    """Shared root that contains every user's per-user checkpoint directory."""
-    return _db_parent_dir() / "checkpoints"
+    """Shared root containing every user's per-user checkpoint base."""
+    return _db_parent_dir() / "user-checkpoints"
 
 
-def checkpoint_dir(username: str | None = None) -> Path:
-    """Checkpoint directory.
+def checkpoint_base(username: str | None = None) -> Path:
+    """Per-user ``data_dir`` passed to the framework's checkpoint helpers.
 
-    When ``username`` is given, return that user's isolated directory so one
-    user can never read or clear another user's checkpoints. With no username
-    (legacy/global callers) return the shared root for backward compatibility.
+    The upstream framework writes checkpoint DBs at ``<data_dir>/checkpoints/
+    <TICKER>.db`` (see ``tradingagents/graph/checkpointer.py``). The web runner
+    passes this per-user base as that ``data_dir`` so each user's checkpoints
+    live under ``<root>/<user>/checkpoints/`` and never mix with other users —
+    independent of the SHARED market-data cache (``data_cache_dir``).
+
+    With no username (legacy callers) return the shared root.
     """
     if username:
         return checkpoint_root() / safe_username(username)
     return checkpoint_root()
 
 
-def user_cache_dir(username: str) -> Path:
-    """Per-user ``data_cache_dir`` for the TradingAgents framework.
+def checkpoint_dir(username: str | None = None) -> Path:
+    """Directory that actually holds this user's checkpoint ``*.db`` files.
 
-    The upstream framework derives its checkpoint location from
-    ``config["data_cache_dir"] + "/checkpoints"`` (see
-    ``tradingagents/graph/checkpointer.py``). To isolate checkpoints per user
-    without modifying the framework, we point each user at their own cache
-    directory; the framework then writes ``<user-cache>/checkpoints/<TICKER>.db``
-    under it.
+    This is ``checkpoint_base(username)/checkpoints`` to match where the
+    framework writes them; the API layer lists/clears files here.
     """
-    return _db_parent_dir() / "user-cache" / safe_username(username)
+    return checkpoint_base(username) / "checkpoints"
