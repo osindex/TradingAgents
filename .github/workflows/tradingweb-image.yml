@@ -7,15 +7,11 @@ on:
       - cli
     tags:
       - "v*"
-    paths:
-      - "TradingWeb/**"
-      - "tradingagents/**"
-      - "cli/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "docker-compose.web.yml"
-      - ".dockerignore"
-      - ".github/workflows/tradingweb-image.yml"
+    # NOTE: no `paths:` filter here. GitHub Actions does not apply path
+    # filters reliably to tag pushes — when `paths:` is present, tag pushes
+    # frequently do NOT trigger the workflow at all, so `v*` tags would never
+    # build an image. Branch (main/cli) and tag pushes are infrequent enough
+    # that always building is the safe, predictable choice.
   workflow_dispatch:
 
 permissions:

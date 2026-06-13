@@ -100,6 +100,15 @@ app = FastAPI(title="TradingWeb", docs_url=None, redoc_url=None)
 def _startup() -> None:
     db.init_db()
     db.ensure_provider_profiles(default_provider_profiles())
+    # Runs execute on in-memory daemon threads, so a restart leaves any
+    # in-flight run stuck in 'running'/'pending' forever. Reconcile them to a
+    # terminal 'error' state on boot so the UI is never stuck.
+    reconciled = db.reconcile_orphaned_runs()
+    if reconciled:
+        logger.warning(
+            "Reconciled %d orphaned run(s) left 'running'/'pending' by a previous restart",
+            reconciled,
+        )
     if MOCK_MODE:
         logger.info("TradingWeb running in MOCK mode (TRADINGWEB_MOCK=1)")
 

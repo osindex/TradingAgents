@@ -192,6 +192,39 @@ def set_agent_statuses(run_id: int, statuses: Dict[str, str]) -> None:
     update_run(run_id, agent_statuses_json=json.dumps(statuses))
 
 
+def reconcile_orphaned_runs() -> int:
+    """Mark runs left in-flight by a process restart as errored.
+
+    Runs execute on in-memory daemon threads, so a container restart kills any
+    'running'/'pending' run mid-flight without ever writing its terminal
+    status. Such rows would otherwise stay 'running' forever. Called on
+    startup: flip them to 'error' with an explanatory message and a
+    finished_at, so the UI shows a final state and the user can re-run.
+    Returns the number of rows reconciled.
+    """
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT id FROM runs WHERE status IN ('running', 'pending')"
+        ).fetchall()
+        if not rows:
+            return 0
+        msg = (
+            "Run interrupted by a server restart; the in-memory analysis "
+            "thread did not survive. Please re-run."
+        )
+        now = utc_now_iso()
+        conn.execute(
+            "UPDATE runs SET status = 'error', error = ?, finished_at = ? "
+            "WHERE status IN ('running', 'pending')",
+            (msg, now),
+        )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
 def get_run(run_id: int, username: Optional[str] = None) -> Optional[Dict[str, Any]]:
     conn = connect()
     try:
