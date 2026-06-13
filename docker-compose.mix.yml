@@ -16,6 +16,8 @@ services:
       - tradingweb_data:/home/appuser/.tradingweb
       - tradingagents_data:/home/appuser/.tradingagents
     restart: unless-stopped
+    networks:
+      - web-shared
 
   tradingweb:
     image: ${TRADINGWEB_IMAGE:-ghcr.io/osindex/tradingagents-tradingweb:main}
@@ -43,7 +45,14 @@ services:
       - tradingweb_data:/home/appuser/.tradingweb
       - tradingagents_data:/home/appuser/.tradingagents
     restart: unless-stopped
+    networks:
+      - web-shared
 
 volumes:
   tradingweb_data:
   tradingagents_data:
+
+networks:
+  web-shared:
+    external: true
+    name: ${TRADINGWEB_NETWORK:-bridge}

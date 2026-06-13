@@ -36,6 +36,8 @@ FROM cli-base AS web-build
 COPY TradingWeb/requirements.txt /tmp/tradingweb-requirements.txt
 RUN . /opt/venv/bin/activate \
  && pip install --no-cache-dir -r /tmp/tradingweb-requirements.txt
+# Keep TradingWeb source in /build so later stages can COPY it by stable path.
+COPY TradingWeb /build/TradingWeb
 
 FROM python:3.12-slim AS web
 
