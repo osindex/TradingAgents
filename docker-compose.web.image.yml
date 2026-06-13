@@ -1,9 +1,6 @@
 services:
   tradingweb:
     image: ${TRADINGWEB_IMAGE:-ghcr.io/osindex/tradingagents-tradingweb:main}
-    build:
-      context: .
-      dockerfile: TradingWeb/Dockerfile
     env_file:
       - path: .env
         required: false

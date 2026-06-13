@@ -142,10 +142,9 @@ OPENAI_API_KEY=...
 
 ### GitHub 自动打包镜像
 
-仓库包含 `.github/workflows/tradingweb-image.yml`，当推送到 `develop` / `main`、创建 `v*` tag，或手动触发 workflow 时，会自动构建并推送到 GitHub Container Registry：
+仓库包含 `.github/workflows/tradingweb-image.yml`，当推送到 `main`、创建 `v*` tag，或手动触发 workflow 时，会自动构建并推送到 GitHub Container Registry：
 
 ```text
-ghcr.io/osindex/tradingagents-tradingweb:develop
 ghcr.io/osindex/tradingagents-tradingweb:main
 ghcr.io/osindex/tradingagents-tradingweb:<git-tag>
 ghcr.io/osindex/tradingagents-tradingweb:sha-<commit>
@@ -154,7 +153,7 @@ ghcr.io/osindex/tradingagents-tradingweb:sha-<commit>
 如果只想使用 GitHub 已打好的镜像，不在本机 build：
 
 ```bash
-docker pull ghcr.io/osindex/tradingagents-tradingweb:develop
+docker pull ghcr.io/osindex/tradingagents-tradingweb:main
 ```
 
 然后运行：
@@ -166,7 +165,7 @@ docker run --rm -p 8731:8731 \
   -e TRADINGWEB_SECRET="replace-with-random-secret" \
   -v tradingweb_data:/home/appuser/.tradingweb \
   -v tradingagents_data:/home/appuser/.tradingagents \
-  ghcr.io/osindex/tradingagents-tradingweb:develop
+  ghcr.io/osindex/tradingagents-tradingweb:main
 ```
 
 如果 GHCR package 是私有的，先登录：
@@ -227,10 +226,19 @@ docker compose -f docker-compose.web.yml up --build
 如果想让 compose 直接拉 GitHub 自动构建的镜像，避免本地构建：
 
 ```bash
-TRADINGWEB_IMAGE=ghcr.io/osindex/tradingagents-tradingweb:develop \
+TRADINGWEB_IMAGE=ghcr.io/osindex/tradingagents-tradingweb:main \
 TRADINGWEB_USERS="admin:change-me" \
 TRADINGWEB_SECRET="replace-with-random-secret" \
 docker compose -f docker-compose.web.yml up --pull always --no-build
+```
+
+如果你只想运行“打包后的镜像”，可以直接用专门的镜像 compose：
+
+```bash
+TRADINGWEB_IMAGE=ghcr.io/osindex/tradingagents-tradingweb:main \
+TRADINGWEB_USERS="admin:change-me" \
+TRADINGWEB_SECRET="replace-with-random-secret" \
+docker compose -f docker-compose.web.image.yml up --pull always
 ```
 
 访问：
