@@ -140,6 +140,14 @@ OPENAI_API_KEY=...
 
 当前没有修改根目录 `docker-compose.yml`。Web 使用独立的 `docker-compose.web.yml` 和 `TradingWeb/Dockerfile`，会把主项目与 TradingWeb 打包到同一个镜像里。
 
+### 三种 compose 的区别
+
+- `docker-compose.web.yml`：通用版。既支持本地构建，也支持通过 `TRADINGWEB_IMAGE` 拉取镜像运行；保留 `.env`、`host.docker.internal` 和本地调试兼容项。
+- `docker-compose.web.image.yml`：镜像运行版。默认就是从 GHCR 拉镜像，适合“我已经有打包好的镜像，只想运行”。
+- `docker-compose.web.min.yml`：最小版。只保留镜像、端口和数据卷，适合生产部署或极简运行。
+
+最小版和现在版本的区别是：最小版删掉了 `.env` 兼容、宿主机网关映射、额外环境变量覆盖等方便开发/排错的配置，所以更简洁，但也更依赖你已经把运行环境准备好。
+
 ### GitHub 自动打包镜像
 
 仓库包含 `.github/workflows/tradingweb-image.yml`，当推送到 `main`、创建 `v*` tag，或手动触发 workflow 时，会自动构建并推送到 GitHub Container Registry：
@@ -155,6 +163,20 @@ ghcr.io/osindex/tradingagents-tradingweb:sha-<commit>
 ```bash
 docker pull ghcr.io/osindex/tradingagents-tradingweb:main
 ```
+
+如果你的机器是 ARM64（例如 Apple Silicon）而镜像还没来得及发布多架构版本，可能会看到：
+
+```text
+no matching manifest for linux/arm64/v8
+```
+
+临时绕过方式：
+
+```bash
+docker pull --platform linux/amd64 ghcr.io/osindex/tradingagents-tradingweb:main
+```
+
+但更推荐等 workflow 发布了 `linux/amd64` + `linux/arm64` 双架构镜像后再直接拉取，这样就不需要手工指定平台了。
 
 然后运行：
 
@@ -240,6 +262,23 @@ TRADINGWEB_USERS="admin:change-me" \
 TRADINGWEB_SECRET="replace-with-random-secret" \
 docker compose -f docker-compose.web.image.yml up --pull always
 ```
+
+如果你想要更适合生产部署的最小版：
+
+```bash
+TRADINGWEB_IMAGE=ghcr.io/osindex/tradingagents-tradingweb:main \
+TRADINGWEB_USERS="admin:change-me,alice:strong-password" \
+TRADINGWEB_SECRET="replace-with-random-secret" \
+docker compose -f docker-compose.web.min.yml up --pull always
+```
+
+最小版如何添加默认用户：通过 `TRADINGWEB_USERS` 环境变量传入，格式是 `用户名:密码,用户名2:密码2`。例如：
+
+```bash
+TRADINGWEB_USERS="admin:change-me,alice:strong-password"
+```
+
+如果不设置，最小版会默认使用 `admin:admin`，仅建议本地临时测试。生产环境请务必改成自己的强密码，并同步设置 `TRADINGWEB_SECRET`。
 
 访问：
 

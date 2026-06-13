@@ -128,6 +128,24 @@ cp .env.example .env  # add your API keys
 docker compose run --rm tradingagents
 ```
 
+### TradingWeb (Web UI)
+
+If you want to run the packaged TradingWeb image with Docker Compose, there are three variants:
+
+- `docker-compose.web.yml` — general-purpose; supports local build or pulling a prebuilt image.
+- `docker-compose.web.image.yml` — image-only; pulls the prebuilt GHCR image and runs it.
+- `docker-compose.web.min.yml` — minimal; keeps only image, ports, volumes, and default-user env vars.
+
+For the minimal version, add default users via `TRADINGWEB_USERS`:
+
+```bash
+TRADINGWEB_USERS="admin:change-me,alice:strong-password" \
+TRADINGWEB_SECRET="replace-with-random-secret" \
+docker compose -f docker-compose.web.min.yml up --pull always
+```
+
+If `TRADINGWEB_USERS` is not set, the minimal compose falls back to `admin:admin` for local testing only. In production, always set a strong password and a proper `TRADINGWEB_SECRET`.
+
 For local models with Ollama:
 ```bash
 docker compose --profile ollama run --rm tradingagents-ollama
