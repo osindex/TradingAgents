@@ -5,6 +5,7 @@ import * as viewLogin from './view-login.js';
 import * as viewWizard from './view-wizard.js';
 import * as viewRun from './view-run.js';
 import * as viewHistory from './view-history.js';
+import * as viewBatch from './view-batch.js';
 import * as viewProfiles from './view-profiles.js';
 
 const root = document.getElementById('view-root');
@@ -34,6 +35,7 @@ function renderNavbar() {
     </a>
     <nav class="nav-links">
       <a class="nav-link" data-route="new" href="#/new">新建分析</a>
+      <a class="nav-link" data-route="batch" href="#/batch">批量队列</a>
       ${isAdmin ? '<a class="nav-link" data-route="profiles" href="#/profiles">接入商管理</a>' : ''}
       <a class="nav-link" data-route="runs" href="#/runs">历史记录</a>
     </nav>
@@ -49,6 +51,7 @@ function highlightNav() {
   navbar.querySelectorAll('.nav-link').forEach((a) => {
     const r = a.dataset.route;
     const active = (r === 'new' && hash.startsWith('#/new'))
+      || (r === 'batch' && hash.startsWith('#/batch'))
       || (r === 'profiles' && hash.startsWith('#/profiles') && state.user === 'admin')
       || (r === 'runs' && hash.startsWith('#/runs'));
     a.classList.toggle('active', active);
@@ -91,9 +94,15 @@ function route() {
   if (runMatch) {
     cleanup = viewRun.render(root, decodeURIComponent(runMatch[1])) || null;
   } else if (hash === '#/profiles' || hash.startsWith('#/profiles?')) {
+    if (state.user !== 'admin') {
+      location.hash = '#/new';
+      return;
+    }
     cleanup = viewProfiles.render(root) || null;
   } else if (hash === '#/runs' || hash.startsWith('#/runs?')) {
     cleanup = viewHistory.render(root) || null;
+  } else if (hash === '#/batch' || hash.startsWith('#/batch?')) {
+    cleanup = viewBatch.render(root) || null;
   } else if (hash === '#/new' || hash.startsWith('#/new?')) {
     cleanup = viewWizard.render(root) || null;
   } else {

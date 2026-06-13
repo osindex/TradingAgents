@@ -113,27 +113,7 @@ export function render(root) {
   }
 
   async function onBatchRun() {
-    const tickersRaw = window.prompt('请输入批量 ticker（每行一个）', 'SPY\nAAPL');
-    if (!tickersRaw) return;
-    const tickers = tickersRaw.split(/\r?\n/).map((s) => s.trim().toUpperCase()).filter(Boolean);
-    if (!tickers.length) return;
-    const body = {
-      tickers,
-      analysis_date: new Date().toISOString().slice(0, 10),
-      analysts: ['market'],
-      research_depth: 1,
-      provider_profile_id: null,
-      llm_provider: 'openai',
-      backend_url: '',
-      quick_think_llm: 'gpt-5.4-mini',
-      deep_think_llm: 'gpt-5.5',
-      output_language: 'Chinese',
-      checkpoint_enabled: false,
-    };
-    const resp = await api('/api/runs/batch', { method: 'POST', body });
-    if (resp && resp.ids && resp.ids.length) {
-      location.hash = `#/runs/${resp.ids[0]}`;
-    }
+    location.hash = '#/batch';
   }
 
   async function onRerun(btn) {

@@ -214,15 +214,11 @@ export function render(root) {
     }
     return `
       <h2 class="wizard-step-title">接入商配置</h2>
-      <p class="wizard-step-sub">选择一个存储在 SQLite 中的 provider profile</p>
+      <p class="wizard-step-sub">选择一个存储在 SQLite 中的 provider profile（不支持手填网关地址）</p>
       <div class="field">
         <label class="field-label" for="f-profile">接入商</label>
         <select class="select" id="f-profile">${options}</select>
-        ${currentProfile() && currentProfile().base_url ? `<div class="field-hint">默认网关：<span class="mono">${esc(currentProfile().base_url)}</span></div>` : ''}
-      </div>
-      <div class="field">
-        <label class="field-label" for="f-backend">网关地址（profile 覆盖项）</label>
-        <input class="input mono" id="f-backend" value="${esc(data.backend_url)}" placeholder="https://…" spellcheck="false">
+        ${currentProfile() && currentProfile().can_view_base_url && currentProfile().base_url ? `<div class="field-hint">默认网关：<span class="mono">${esc(currentProfile().base_url)}</span></div>` : ''}
       </div>
       ${thinkingHtml}`;
   }
@@ -311,7 +307,9 @@ export function render(root) {
     return pr ? pr.label : data.provider;
   }
   function currentProfile() {
-    return (opts.provider_profiles || []).find((p) => String(p.id) === String(data.provider_profile_id)) || null;
+    const p = (opts.provider_profiles || []).find((x) => String(x.id) === String(data.provider_profile_id)) || null;
+    if (!p) return null;
+    return { ...p, can_view_base_url: !!p.base_url && !!p.api_key_env };
   }
   function resolvedQuick() {
     return data.quick === CUSTOM ? data.quickCustom.trim() : (data.quick || '');
@@ -367,7 +365,6 @@ export function render(root) {
         data.provider_profile_id = Number(sel.value);
         const profile = currentProfile();
         data.provider = profile && profile.provider_key ? profile.provider_key : data.provider;
-        data.backend_url = profile && profile.base_url ? profile.base_url : '';
         data.thinkingValue = profile && (profile.google_thinking_level || profile.openai_reasoning_effort || profile.anthropic_effort) || null;
         if (profile) {
           data.quick = profile.quick_think_llm || data.quick;
@@ -376,9 +373,6 @@ export function render(root) {
         models = null; modelsProvider = '';
         getModels(data.provider).catch(() => {});
         draw();
-      });
-      root.querySelector('#f-backend').addEventListener('input', (e) => {
-        data.backend_url = e.target.value.trim();
       });
       root.querySelectorAll('#thinking-group input[name="thinking"]').forEach((r) => {
         r.addEventListener('change', () => {
@@ -444,8 +438,7 @@ export function render(root) {
         });
       }
     } else if (step === 4) {
-      const b = root.querySelector('#f-backend');
-      if (b) data.backend_url = b.value.trim();
+      // backend_url is intentionally not user-editable; it comes from the selected profile.
     }
   }
 
@@ -514,7 +507,6 @@ export function render(root) {
       research_depth: Number(data.research_depth),
       provider_profile_id: data.provider_profile_id,
       llm_provider: data.provider,
-      backend_url: data.backend_url,
       quick_think_llm: resolvedQuick(),
       deep_think_llm: resolvedDeep(),
       output_language: resolvedLanguage(),

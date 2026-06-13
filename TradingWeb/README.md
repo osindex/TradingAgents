@@ -118,8 +118,12 @@ OPENAI_API_KEY=...
 不要把 `your-gateway.example.com` 这种占位域名放进 `.env`。如果容器日志出现 `httpx.ConnectError` / `Name or service not known` / `Connection refused`，优先检查：
 
 1. `.env` 里的 `TRADINGAGENTS_LLM_BACKEND_URL` 是否是真实可访问地址；不用自定义网关时请注释掉或留空。
-2. 网关是否必须带 `/v1`，例如 OpenAI 兼容网关通常是 `http://host.docker.internal:3000/v1`。
-3. 如果网关跑在宿主机，本 compose 已内置 `host.docker.internal:host-gateway` 映射；容器内请不要使用 `localhost` 指宿主机。
+2. 网关是否必须带 `/v1`。例如 OpenAI 兼容网关通常是 `http://host.docker.internal:3000/v1`。
+3. **Linux 注意**：`host.docker.internal` 在 Linux 上通常**不会自动可用**。本仓库的 `docker-compose.web.yml` / `docker-compose.web.image.yml` 已显式加了 `extra_hosts: host.docker.internal:host-gateway`，但如果你自己复制 compose、或者用的是老版本 Docker/Compose，仍然可能解析失败。
+4. 如果 `host.docker.internal` 不通，请改用：
+   - 宿主机局域网 IP，例如 `http://192.168.1.10:3000/v1`
+   - 或在 compose 里继续保留 `extra_hosts: - "host.docker.internal:host-gateway"`
+   - 容器内请不要使用 `localhost` 指宿主机，因为那只会指向容器自己。
 
 ## API 概览
 
@@ -342,17 +346,23 @@ Web 新增了“接入商管理”页，可以直接管理 SQLite 里的 provide
 - **记忆管理**：可查看并清理当前用户的 memory log。
 - **中止运行**：运行中可在详情页直接取消。
 - **批量运行**：历史页已接到 `POST /api/runs/batch`。
+- **批量队列页**：可在“批量队列”中提交多个 ticker、查看状态、跳转详情、取消运行。
+
+### LLM 厂商 / provider 的权限规则
+
+- **admin**：可以进入“接入商管理”页，新增 / 编辑 / 删除 provider profile，配置网关地址和 API key 环境变量名。
+- **普通用户**：只能在“新建分析”里选择 admin 已配置好的 provider profile；**不能手填网关地址**，也不能进入“接入商管理”页。
+- 这样能确保 provider 配置仍由 admin 统一管理，但普通用户仍可在分析时选择已有的供应商配置。
 
 ### 还可以继续扩展的 CLI 能力
 
-- 批量队列 / 调度
 - 定时运行
 - 更细的 checkpoint 恢复点展示
 - 记忆检索和标签化
 
 ### 当前的批量运行说明
 
-Web 已提供批量运行入口，并且后端已接到 `POST /api/runs/batch`。当前 UI 是最小可用版本；如果要真正做“队列/并发控制”，后续可以再接专门的批量任务页。
+Web 已经有独立的“批量队列”页：可以提交多个 ticker、查看每个 run 的状态、跳转详情、取消运行。队列调度仍是最小可用版本（直接创建多个 run 并轮询），但界面上已经是独立队列页了。
 
 ### 手动 docker build/run
 

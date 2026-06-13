@@ -128,6 +128,8 @@ cp .env.example .env  # add your API keys
 docker compose run --rm tradingagents
 ```
 
+If you use the TradingWeb Docker variants and need to point a container at a gateway running on the host, note that `host.docker.internal` is not always available on Linux unless the compose file adds `extra_hosts: host.docker.internal:host-gateway`. When that is not available, use the host LAN IP (for example `http://192.168.1.10:3000/v1`) or add the `extra_hosts` mapping yourself.
+
 ### TradingWeb (Web UI)
 
 If you want to run the packaged TradingWeb image with Docker Compose, there are three variants:

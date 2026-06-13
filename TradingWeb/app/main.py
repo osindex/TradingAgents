@@ -127,27 +127,24 @@ def me(username: str = Depends(require_user)) -> LoginResponse:
 @app.get("/api/options")
 def options(username: str = Depends(require_user)) -> Dict[str, Any]:
     payload = get_options_payload(MOCK_MODE)
-    if is_admin(username):
-        payload["provider_profiles"] = [
-            {
-                "id": p["id"],
-                "name": p["name"],
-                "label": p["name"],
-                "provider_key": p["provider_key"],
-                "base_url": p.get("base_url"),
-                "api_key_env": p.get("api_key_env"),
-                "quick_think_llm": p.get("quick_think_llm"),
-                "deep_think_llm": p.get("deep_think_llm"),
-                "output_language": p.get("output_language"),
-                "google_thinking_level": p.get("google_thinking_level"),
-                "openai_reasoning_effort": p.get("openai_reasoning_effort"),
-                "anthropic_effort": p.get("anthropic_effort"),
-                "enabled": bool(p.get("enabled", 1)),
-            }
-            for p in db.list_provider_profiles()
-        ]
-    else:
-        payload["provider_profiles"] = []
+    payload["provider_profiles"] = [
+        {
+            "id": p["id"],
+            "name": p["name"],
+            "label": p["name"],
+            "provider_key": p["provider_key"],
+            "base_url": p.get("base_url") if is_admin(username) else None,
+            "api_key_env": p.get("api_key_env") if is_admin(username) else None,
+            "quick_think_llm": p.get("quick_think_llm"),
+            "deep_think_llm": p.get("deep_think_llm"),
+            "output_language": p.get("output_language"),
+            "google_thinking_level": p.get("google_thinking_level"),
+            "openai_reasoning_effort": p.get("openai_reasoning_effort"),
+            "anthropic_effort": p.get("anthropic_effort"),
+            "enabled": bool(p.get("enabled", 1)),
+        }
+        for p in db.list_provider_profiles()
+    ]
     return payload
 
 

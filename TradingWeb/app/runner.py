@@ -72,9 +72,11 @@ class RunRecorder:
 
     # -- steps ---------------------------------------------------------
     def info(self, content: str, agent: Optional[str] = None) -> None:
+        logger.info("[run %s][info]%s %s", self.run_id, f"[{agent}]" if agent else "", content)
         db.add_step(self.run_id, "info", agent, content)
 
     def message(self, agent: Optional[str], content: str) -> None:
+        logger.info("[run %s][message]%s %s", self.run_id, f"[{agent}]" if agent else "", content)
         db.add_step(self.run_id, "message", agent, content)
 
     def tool_call(self, name: str, args: Any) -> None:
@@ -82,9 +84,11 @@ class RunRecorder:
             args_str = json.dumps(args, default=str)
         except (TypeError, ValueError):
             args_str = str(args)
+        logger.info("[run %s][tool_call][%s] %s", self.run_id, name, args_str)
         db.add_step(self.run_id, "tool_call", name, args_str)
 
     def error_step(self, content: str) -> None:
+        logger.error("[run %s][error] %s", self.run_id, content)
         db.add_step(self.run_id, "error", None, content)
 
     # -- agent statuses --------------------------------------------------
@@ -92,6 +96,7 @@ class RunRecorder:
         if agent not in self.agent_statuses or self.agent_statuses[agent] == status:
             return
         self.agent_statuses[agent] = status
+        logger.info("[run %s][status][%s] %s", self.run_id, agent, status)
         db.add_step(self.run_id, "status", agent, status)
         db.set_agent_statuses(self.run_id, self.agent_statuses)
 
@@ -105,6 +110,7 @@ class RunRecorder:
         if not content or self._report_history.get(section) == content:
             return
         self._report_history[section] = content
+        logger.info("[run %s][report_update][%s] %s", self.run_id, section, content[:240].replace("\n", " "))
         db.upsert_report(self.run_id, section, content)
         db.add_step(self.run_id, "report_update", section, content)
 
@@ -446,6 +452,7 @@ def _run_entry(
 ) -> None:
     rec = RunRecorder(run_id, initial_agent_statuses(analyst_keys))
     db.update_run(run_id, status="running")
+    logger.info("[run %s] starting user=%s ticker=%s mode=%s", run_id, selections.get("username"), selections.get("ticker"), "mock" if mock else "real")
     rec.info(f"Run {run_id} started ({'mock' if mock else 'real'} mode)")
     try:
         if mock:
@@ -466,6 +473,7 @@ def _run_entry(
         db.update_run(
             run_id, status="completed", decision=decision, finished_at=db.utc_now_iso()
         )
+        logger.info("[run %s] completed decision=%s", run_id, decision)
     except Exception:  # noqa: BLE001 - top-level runner catch records traceback
         tb = traceback.format_exc()
         logger.exception("Run %s failed", run_id)
@@ -474,3 +482,4 @@ def _run_entry(
             if status == "in_progress":
                 rec.set_status(agent, "error")
         db.update_run(run_id, status="error", error=tb, finished_at=db.utc_now_iso())
+        logger.error("[run %s] failed", run_id)
