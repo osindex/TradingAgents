@@ -130,19 +130,15 @@ docker compose run --rm tradingagents
 
 TradingWeb's image is built directly on top of an already-published CLI image (`ghcr.io/osindex/tradingagents-cli:cli`) via the `CLI_IMAGE` build-arg, rather than rebuilding the TradingAgents core and re-running `pip install .` each time. The web build only layers the TradingWeb dependencies and source on top, so `main`/tag web builds are fast. Local `docker compose ... --build` defaults `CLI_IMAGE` to the in-tree `cli` stage, so it stays self-contained. Note this version-locks the web image to the cli image: change core `tradingagents/` logic → republish the cli image first, then the web build picks it up.
 
-If you want to run the CLI and Web as two separate containers, use `docker-compose.mix.yml`. In that mode, the two services share the same data volumes (SQLite, memory, checkpoints, results) and communicate through the agreed file/database contract instead of importing each other.
+Because the web image already contains the full CLI/core code, a single web container is enough to run analyses — each analysis executes in the web process. Per-user isolation (provider profile/config, memory, checkpoints, run history) is handled inside the web app by login user, so you do NOT need to run a separate CLI container for that. Run the interactive CLI on demand with `docker compose -f docker-compose.web.yml run --rm -it tradingweb tradingagents`.
 
-If you use the TradingWeb Docker variants and need to point a container at a gateway running on the host, note that `host.docker.internal` is not always available on Linux unless the compose file adds `extra_hosts: host.docker.internal:host-gateway`. When that is not available, use the host LAN IP (for example `http://192.168.1.10:3000/v1`) or add the `extra_hosts` mapping yourself.
+If you point a container at a gateway running on the host, note that `host.docker.internal` is not always available on Linux unless the compose file adds `extra_hosts: host.docker.internal:host-gateway`. When that is not available, use the host LAN IP (for example `http://192.168.1.10:3000/v1`) or add the `extra_hosts` mapping yourself.
 
 ### TradingWeb (Web UI)
 
-If you want to run the packaged TradingWeb image with Docker Compose, there are three variants:
+Run the packaged TradingWeb image with a single compose file, `docker-compose.web.yml`. It supports both local build and pulling a prebuilt GHCR image (via `TRADINGWEB_IMAGE`).
 
-- `docker-compose.web.yml` — general-purpose; supports local build or pulling a prebuilt image.
-- `docker-compose.web.image.yml` — image-only; pulls the prebuilt GHCR image and runs it.
-- `docker-compose.web.min.yml` — minimal; keeps only image, ports, volumes, and default-user env vars.
-
-CI now also publishes `ghcr.io/osindex/tradingagents-cli:<tag>` in the same workflow so CLI can run as a standalone image.
+CI also publishes `ghcr.io/osindex/tradingagents-cli:<tag>` so CLI can run as a standalone image.
 
 Current split rule:
 
@@ -151,15 +147,15 @@ Current split rule:
 
 CLI image tag example includes branch-based tag (for this branch): `cli`.
 
-For the minimal version, add default users via `TRADINGWEB_USERS`:
+Add default users via `TRADINGWEB_USERS`:
 
 ```bash
 TRADINGWEB_USERS="admin:change-me,alice:strong-password" \
 TRADINGWEB_SECRET="replace-with-random-secret" \
-docker compose -f docker-compose.web.min.yml up --pull always
+docker compose -f docker-compose.web.yml up --pull always
 ```
 
-If `TRADINGWEB_USERS` is not set, the minimal compose falls back to `admin:admin` for local testing only. In production, always set a strong password and a proper `TRADINGWEB_SECRET`.
+If `TRADINGWEB_USERS` is not set, the compose falls back to `admin:admin` for local testing only. In production, always set a strong password and a proper `TRADINGWEB_SECRET`.
 
 For local models with Ollama:
 ```bash

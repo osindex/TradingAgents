@@ -68,7 +68,12 @@ from .options import (  # noqa: E402
     provider_default_base_url,
     validate_ticker,
 )
-from .runtime_paths import memory_log_path
+from .runtime_paths import (
+    checkpoint_dir,
+    checkpoint_root,
+    memory_log_path,
+    user_cache_dir,
+)
 from .runner import initial_agent_statuses, start_run_thread  # noqa: E402
 from .runner import cancel_run  # noqa: E402
 from .schemas import (  # noqa: E402
@@ -302,8 +307,8 @@ def create_run(
         "anthropic_effort": body.anthropic_effort,
         "checkpoint_enabled": bool(body.checkpoint_enabled),
     }
-    if body.checkpoint_enabled:
-        config_summary["checkpoint_dir"] = str(_REPO_ROOT / ".tradingweb" / "checkpoints")
+    if body.checkpoint_enabled and username:
+        config_summary["checkpoint_dir"] = str(checkpoint_dir(username))
     if username:
         config_summary["memory_log_path"] = str(memory_log_path(username))
 
@@ -405,24 +410,49 @@ def clear_memory(username: str = Depends(require_user)) -> Response:
     return Response(status_code=204)
 
 
+def _user_checkpoint_dir(username: str):
+    """Where the framework writes this user's checkpoint DBs.
+
+    The framework derives the location from data_cache_dir
+    (<user_cache_dir>/checkpoints/<TICKER>.db), so we list/clear there.
+    """
+    return user_cache_dir(username) / "checkpoints"
+
+
 @app.get("/api/checkpoints")
-def checkpoint_info(username: str = Depends(require_user)) -> Dict[str, Any]:
-    if not is_admin(username):
-        raise HTTPException(status_code=403, detail="Admin only")
-    cp_root = _REPO_ROOT / ".tradingweb" / "checkpoints"
-    if not cp_root.exists():
-        return {"directory": str(cp_root), "files": []}
-    files = sorted(str(p) for p in cp_root.glob("*.db"))
-    return {"directory": str(cp_root), "files": files}
+def checkpoint_info(
+    scope: str = Query("self"),
+    username: str = Depends(require_user),
+) -> Dict[str, Any]:
+    """List checkpoint DBs for the current user (or all users for admins).
+
+    Each user only ever sees their own checkpoints. Admins may pass
+    ``?scope=all`` to inspect every user's checkpoints for maintenance.
+    """
+    if scope == "all" and is_admin(username):
+        root = checkpoint_root()
+        files = sorted(str(p) for p in root.glob("*/checkpoints/*.db")) if root.exists() else []
+        # user-cache layout: <root>/<user>/checkpoints; but build_config uses
+        # user_cache_dir(user)/checkpoints, so also scan that layout.
+        cache_files = []
+        cache_parent = user_cache_dir("_").parent  # .../user-cache
+        if cache_parent.exists():
+            cache_files = sorted(str(p) for p in cache_parent.glob("*/checkpoints/*.db"))
+        return {"scope": "all", "files": sorted(set(files) | set(cache_files))}
+
+    cp_dir = _user_checkpoint_dir(username)
+    if not cp_dir.exists():
+        return {"scope": "self", "directory": str(cp_dir), "files": []}
+    files = sorted(str(p) for p in cp_dir.glob("*.db"))
+    return {"scope": "self", "directory": str(cp_dir), "files": files}
 
 
 @app.delete("/api/checkpoints", status_code=204)
 def clear_checkpoints(username: str = Depends(require_user)) -> Response:
-    if not is_admin(username):
-        raise HTTPException(status_code=403, detail="Admin only")
-    cp_root = _REPO_ROOT / ".tradingweb" / "checkpoints"
-    if cp_root.exists():
-        for p in cp_root.glob("*.db"):
+    """Clear only the current user's checkpoints."""
+    cp_dir = _user_checkpoint_dir(username)
+    if cp_dir.exists():
+        for p in cp_dir.glob("*.db"):
             p.unlink()
     return Response(status_code=204)
 

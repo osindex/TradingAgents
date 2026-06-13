@@ -16,7 +16,7 @@ import traceback
 from typing import Any, Dict, List, Optional
 
 from . import db
-from .runtime_paths import checkpoint_dir, memory_log_path
+from .runtime_paths import checkpoint_dir, memory_log_path, user_cache_dir
 from .options import ANALYST_AGENT_LABELS, REPORT_SECTIONS
 
 logger = logging.getLogger("tradingweb.runner")
@@ -192,12 +192,20 @@ def build_config(selections: Dict[str, Any]) -> Dict[str, Any]:
     config["openai_reasoning_effort"] = selections.get("openai_reasoning_effort")
     config["anthropic_effort"] = selections.get("anthropic_effort")
     config["checkpoint_enabled"] = bool(selections.get("checkpoint_enabled", False))
-    # Web-side per-user memory isolation: keep the upstream framework unchanged,
-    # but give each login user a distinct append-only memory log file.
+    # Web-side per-user isolation: keep the upstream framework unchanged, but
+    # give each login user distinct paths so users never share memory or
+    # checkpoints with each other.
     username = selections.get("username")
     if username:
         config["memory_log_path"] = str(memory_log_path(str(username)))
-    config["checkpoint_dir"] = str(checkpoint_dir())
+        # The framework derives its checkpoint dir from data_cache_dir
+        # (<data_cache_dir>/checkpoints/<TICKER>.db). Point each user at their
+        # own cache dir so checkpoints are isolated per user without touching
+        # framework source.
+        config["data_cache_dir"] = str(user_cache_dir(str(username)))
+        config["checkpoint_dir"] = str(checkpoint_dir(str(username)))
+    else:
+        config["checkpoint_dir"] = str(checkpoint_dir())
     return config
 
 

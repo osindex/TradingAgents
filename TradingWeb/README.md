@@ -119,7 +119,7 @@ OPENAI_API_KEY=...
 
 1. `.env` 里的 `TRADINGAGENTS_LLM_BACKEND_URL` 是否是真实可访问地址；不用自定义网关时请注释掉或留空。
 2. 网关是否必须带 `/v1`。例如 OpenAI 兼容网关通常是 `http://host.docker.internal:3000/v1`。
-3. **Linux 注意**：`host.docker.internal` 在 Linux 上通常**不会自动可用**。本仓库的 `docker-compose.web.yml` / `docker-compose.web.image.yml` 已显式加了 `extra_hosts: host.docker.internal:host-gateway`，但如果你自己复制 compose、或者用的是老版本 Docker/Compose，仍然可能解析失败。
+3. **Linux 注意**：`host.docker.internal` 在 Linux 上通常**不会自动可用**。本仓库的 `docker-compose.web.yml` 已显式加了 `extra_hosts: host.docker.internal:host-gateway`，但如果你自己复制 compose、或者用的是老版本 Docker/Compose，仍然可能解析失败。
 4. 如果 `host.docker.internal` 不通，请改用：
    - 宿主机局域网 IP，例如 `http://192.168.1.10:3000/v1`
    - 或在 compose 里继续保留 `extra_hosts: - "host.docker.internal:host-gateway"`
@@ -137,6 +137,8 @@ OPENAI_API_KEY=...
 - `GET /api/runs/{id}`
 - `GET /api/runs/{id}/steps?after_id=0`
 - `DELETE /api/runs/{id}`
+- `GET /api/memory` · `DELETE /api/memory`（按用户隔离）
+- `GET /api/checkpoints`（默认当前用户，admin 可 `?scope=all`）· `DELETE /api/checkpoints`（清当前用户）
 
 前端通过轮询 `/api/runs/{id}/steps` 实现无刷新更新。
 
@@ -145,13 +147,11 @@ OPENAI_API_KEY=...
 当前没有修改根目录 `docker-compose.yml`。Web 使用独立的 `docker-compose.web.yml` 和 `TradingWeb/Dockerfile`。
 在 `tradingweb-image.yml` CI 中，CLI 与 Web 已经分 target 打包并分别发布成两份镜像：`tradingagents-cli` 和 `tradingagents-tradingweb`。
 
-### 三种 compose 的区别
+### 单 compose 文件
 
-- `docker-compose.web.yml`：通用版。既支持本地构建，也支持通过 `TRADINGWEB_IMAGE` 拉取镜像运行；保留 `.env`、`host.docker.internal` 和本地调试兼容项。
-- `docker-compose.web.image.yml`：镜像运行版。默认就是从 GHCR 拉镜像，适合“我已经有打包好的镜像，只想运行”。
-- `docker-compose.web.min.yml`：最小版。只保留镜像、端口和数据卷，适合生产部署或极简运行。
+现在只保留一个 `docker-compose.web.yml`（通用版）：既支持本地构建，也支持通过 `TRADINGWEB_IMAGE` 拉取镜像运行；保留 `.env`、`host.docker.internal` 和本地调试兼容项。
 
-最小版和现在版本的区别是：最小版删掉了 `.env` 兼容、宿主机网关映射、额外环境变量覆盖等方便开发/排错的配置，所以更简洁，但也更依赖你已经把运行环境准备好。
+> 之前的镜像版 / 最小版 / mix 双容器 compose 已删除。因为 web 镜像本身已包含完整 CLI/核心代码，单个 web 容器即可运行分析，且按用户隔离（配置、记忆、checkpoint、历史）都在 web 进程内完成，不需要额外的 CLI 容器。需要交互式 CLI 时用：`docker compose -f docker-compose.web.yml run --rm -it tradingweb tradingagents`。
 
 ### GitHub 自动打包镜像
 
@@ -219,30 +219,18 @@ docker build -f TradingWeb/Dockerfile --target web \
 - `cli` 目标：仅在 `cli` 分支
 - `tradingweb` 目标：仅在 `main` 与 `v*` tag
 
-### 双容器运行（mix-compose）
+### 为什么不用双容器（mix）
 
-如果你想把 CLI 和 Web 完全拆成两个容器运行，请使用根目录的 `docker-compose.mix.yml`。
+早期提供过 `docker-compose.mix.yml` 把 CLI 和 Web 拆成两个容器，现已删除。原因：
 
-- `tradingcli`：负责执行 TradingAgents CLI / 运行引擎
-- `tradingweb`：负责登录、provider 管理、队列、历史、导出
+- web 镜像基于 cli 镜像构建，已包含完整 CLI/核心代码；
+- 分析实际在 web 进程内执行，单 web 容器即可；
+- 按用户隔离（配置、记忆、checkpoint、历史）全部在 web 应用内部完成，不依赖第二个容器。
 
-两个容器通过共享卷协作：
-
-- `tradingweb_data`：SQLite、memory、checkpoint、results 等共享数据
-- `tradingagents_data`：TradingAgents 自己的数据缓存
-
-这套方案不要求两个容器互相 import 源码；它们只通过 DB/文件路径/环境变量契约通信。
-
-然后运行：
+需要手动跑交互式 CLI 时，直接在 web 容器里跑即可：
 
 ```bash
-# CLI 服务
-docker pull ghcr.io/osindex/tradingagents-cli:cli
-
-# Web 服务
-docker pull ghcr.io/osindex/tradingagents-tradingweb:main
-
-docker compose -f docker-compose.mix.yml up --pull always
+docker compose -f docker-compose.web.yml run --rm -it tradingweb tradingagents
 ```
 
 如果 GHCR package 是私有的，先登录：
@@ -285,16 +273,23 @@ cd TradingWeb
 python -m app.launcher --profile "OpenAI" -- --help
 ```
 
-### 按用户隔离决策记忆
+### 按用户隔离决策记忆与 checkpoint
 
-原框架的决策记忆默认是共享的 markdown 文件。TradingWeb 不改原框架源码，而是在 Web/launcher 这一层按登录用户注入独立的 `TRADINGAGENTS_MEMORY_LOG_PATH`，例如：
+原框架的决策记忆默认是共享的 markdown 文件，checkpoint 也写在共享的 `data_cache_dir/checkpoints` 下。TradingWeb 不改原框架源码，而是在 Web 这一层按登录用户注入独立路径：
+
+- 记忆：`config["memory_log_path"]` → 每用户独立 md
+- checkpoint：把 `config["data_cache_dir"]` 指向每用户独立目录，框架据此把 checkpoint 落在 `<user-cache>/checkpoints/<TICKER>.db`
+
+例如：
 
 ```text
 TradingWeb/data/memory/admin/trading_memory.md
 TradingWeb/data/memory/alice/trading_memory.md
+TradingWeb/data/user-cache/admin/checkpoints/AAPL.db
+TradingWeb/data/user-cache/alice/checkpoints/AAPL.db
 ```
 
-这样每个用户看到的是自己的历史记忆，不会互相污染；CLI 继续保持原有逻辑，只是运行时拿到不同的进程环境变量。
+这样每个用户的记忆与 checkpoint 都互相隔离、互不可见；框架本身逻辑不变，只是运行时拿到不同的路径配置。`GET/DELETE /api/checkpoints` 默认只操作当前用户的 checkpoint，admin 可加 `?scope=all` 查看全部。
 
 ### 使用独立 compose（推荐）
 
@@ -321,31 +316,13 @@ TRADINGWEB_SECRET="replace-with-random-secret" \
 docker compose -f docker-compose.web.yml up --pull always --no-build
 ```
 
-如果你只想运行“打包后的镜像”，可以直接用专门的镜像 compose：
-
-```bash
-TRADINGWEB_IMAGE=ghcr.io/osindex/tradingagents-tradingweb:main \
-TRADINGWEB_USERS="admin:change-me" \
-TRADINGWEB_SECRET="replace-with-random-secret" \
-docker compose -f docker-compose.web.image.yml up --pull always
-```
-
-如果你想要更适合生产部署的最小版：
-
-```bash
-TRADINGWEB_IMAGE=ghcr.io/osindex/tradingagents-tradingweb:main \
-TRADINGWEB_USERS="admin:change-me,alice:strong-password" \
-TRADINGWEB_SECRET="replace-with-random-secret" \
-docker compose -f docker-compose.web.min.yml up --pull always
-```
-
-最小版如何添加默认用户：通过 `TRADINGWEB_USERS` 环境变量传入，格式是 `用户名:密码,用户名2:密码2`。例如：
+添加默认用户：通过 `TRADINGWEB_USERS` 环境变量传入，格式是 `用户名:密码,用户名2:密码2`。例如：
 
 ```bash
 TRADINGWEB_USERS="admin:change-me,alice:strong-password"
 ```
 
-如果不设置，最小版会默认使用 `admin:admin`，仅建议本地临时测试。生产环境请务必改成自己的强密码，并同步设置 `TRADINGWEB_SECRET`。
+如果不设置，会默认使用 `admin:admin`，仅建议本地临时测试。生产环境请务必改成自己的强密码，并同步设置 `TRADINGWEB_SECRET`。
 
 访问：
 
@@ -387,14 +364,14 @@ Web 新增了“接入商管理”页，可以直接管理 SQLite 里的 provide
 5. **结果导出**：导出 Markdown、JSON、日志包。
 6. **批量运行 / 队列 / 定时任务**：更高阶的 CLI 扩展。
 
-其中，**admin 可以查看全部策略/所有用户的运行记录**；普通用户只能看到自己的 run。provider 配置页与 checkpoint 管理也仅对 admin 开放；普通用户只能使用 admin 已配置好的 profile。
+其中，**admin 可以查看全部策略/所有用户的运行记录**；普通用户只能看到自己的 run。provider 配置页仅对 admin 开放；普通用户只能使用 admin 已配置好的 profile。checkpoint 与决策记忆均**按登录用户隔离**：每个用户只能查看/清理自己的 checkpoint 和记忆，互不可见；admin 可用 `GET /api/checkpoints?scope=all` 查看全部 checkpoint 以便维护。
 
 ### 已在 Web 中补齐的 CLI 能力按钮
 
 - **复制并重跑**：在 run 详情页和历史列表都可一键复用当前配置重新发起分析。
 - **导出结果**：支持导出 JSON；run 详情页还可导出 Markdown。
-- **checkpoint 管理**：仅 admin 可查询和清理 checkpoint。
-- **记忆管理**：可查看并清理当前用户的 memory log。
+- **checkpoint 管理**：按用户隔离，每个用户查询/清理自己的 checkpoint（admin 可 `?scope=all` 查看全部）。
+- **记忆管理**：可查看并清理当前用户的 memory log（按用户隔离）。
 - **中止运行**：运行中可在详情页直接取消。
 - **批量运行**：历史页已接到 `POST /api/runs/batch`。
 - **批量队列页**：可在“批量队列”中提交多个 ticker、查看状态、跳转详情、取消运行。
