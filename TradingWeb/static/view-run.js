@@ -29,7 +29,13 @@ export function render(root, id) {
   let activeTab = null;
   let stepCount = 0;
   let feedHover = false;
-  let renderedTabContent = {}; // tab key -> 已渲染的原始 md（避免重复渲染）
+  // Track what the single #tab-content container currently shows: which tab
+  // and the exact md rendered for it. Keyed by a single state (not per-tab)
+  // because the container only ever holds one tab's content at a time. Caching
+  // per-tab caused switching back to a previously viewed tab to be skipped,
+  // leaving the other tab's content on screen.
+  let renderedTab = null;     // tab key currently in the DOM
+  let renderedTabMd = null;   // md currently rendered for renderedTab
   let checkpointInfo = null;
   let memoryInfo = null;
 
@@ -336,12 +342,17 @@ export function render(root, id) {
     const md = reports[activeTab];
     if (!md) {
       box.innerHTML = `<div class="tab-empty">该报告尚未生成${isActive() ? '，分析进行中…' : ''}</div>`;
-      renderedTabContent[activeTab] = null;
+      renderedTab = activeTab;
+      renderedTabMd = null;
       return;
     }
-    if (renderedTabContent[activeTab] === md) return; // 内容未变化，跳过重渲染
+    // Skip re-render only when the container already shows THIS tab with the
+    // same content (e.g. during polling). Switching tabs always re-renders
+    // because renderedTab no longer matches activeTab.
+    if (renderedTab === activeTab && renderedTabMd === md) return;
     box.innerHTML = `<div class="md-body">${renderMarkdown(md)}</div>`;
-    renderedTabContent[activeTab] = md;
+    renderedTab = activeTab;
+    renderedTabMd = md;
   }
 
   function renderErrorBlock() {

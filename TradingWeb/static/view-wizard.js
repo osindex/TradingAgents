@@ -31,6 +31,7 @@ export function render(root) {
     quick: null, quickCustom: '',
     deep: null, deepCustom: '',
     language: null, languageCustom: '',
+    checkpoint_enabled: false,
   };
 
   root.innerHTML = `<div class="wizard">${skeletonHtml(5)}</div>`;
@@ -189,7 +190,14 @@ export function render(root) {
     return `
       <h2 class="wizard-step-title">研究深度</h2>
       <p class="wizard-step-sub">辩论轮次越多，分析越深入，耗时与成本也越高</p>
-      <div class="opt-grid cols-3">${cards}</div>`;
+      <div class="opt-grid cols-3">${cards}</div>
+      <label class="toggle-row" id="wz-checkpoint-row">
+        <input type="checkbox" id="wz-checkpoint" ${data.checkpoint_enabled ? 'checked' : ''}>
+        <span class="toggle-text">
+          <span class="toggle-title">启用断点续跑（checkpoint）</span>
+          <span class="toggle-desc">运行中断或失败后可从上次成功的节点续跑；成功完成后会自动清理。断点数据按用户隔离。</span>
+        </span>
+      </label>`;
   }
 
   /* ---------- ④ LLM 厂商 ---------- */
@@ -282,6 +290,7 @@ export function render(root) {
       ['分析日期', `<span class="mono">${esc(data.analysis_date)}</span>`],
       ['分析师团队', esc(analystLabels)],
       ['研究深度', esc(depth ? depth.label : String(data.research_depth))],
+      ['断点续跑', data.checkpoint_enabled ? '已启用' : '未启用'],
       ['LLM 厂商', esc(p ? p.label : data.provider)],
       ['网关地址', `<span class="mono">${esc(data.backend_url)}</span>`],
       ['快速思考模型', `<span class="mono">${esc(resolvedQuick())}</span>`],
@@ -359,6 +368,8 @@ export function render(root) {
           data.research_depth = input.value;
         });
       });
+      const cp = root.querySelector('#wz-checkpoint');
+      if (cp) cp.addEventListener('change', () => { data.checkpoint_enabled = cp.checked; });
     } else if (step === 4) {
       const sel = root.querySelector('#f-profile');
       sel.addEventListener('change', () => {
@@ -510,6 +521,7 @@ export function render(root) {
       quick_think_llm: resolvedQuick(),
       deep_think_llm: resolvedDeep(),
       output_language: resolvedLanguage(),
+      checkpoint_enabled: !!data.checkpoint_enabled,
     };
     const p = currentProvider();
     if (p && p.thinking && data.thinkingValue != null) {

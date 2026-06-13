@@ -143,6 +143,25 @@ a:hover { text-decoration: underline; }
 .btn-lg { padding: 11px 28px; font-size: 14.5px; border-radius: var(--r-md); }
 .btn-sm { padding: 4px 12px; font-size: 12.5px; }
 
+/* ============ toggle row (checkbox + label) ============ */
+.toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  cursor: pointer;
+  transition: border-color var(--trans), background var(--trans);
+}
+.toggle-row:hover { border-color: var(--border-strong); }
+.toggle-row input[type="checkbox"] { margin-top: 3px; flex: none; }
+.toggle-text { display: flex; flex-direction: column; gap: 3px; }
+.toggle-title { font-weight: 600; font-size: 13.5px; color: var(--text); }
+.toggle-desc { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+
 /* ============ forms ============ */
 .field { margin-bottom: var(--sp-5); }
 .field label.field-label {
