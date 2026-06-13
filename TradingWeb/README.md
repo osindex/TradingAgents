@@ -142,7 +142,8 @@ OPENAI_API_KEY=...
 
 ## Docker / Compose 用法
 
-当前没有修改根目录 `docker-compose.yml`。Web 使用独立的 `docker-compose.web.yml` 和 `TradingWeb/Dockerfile`，会把主项目与 TradingWeb 打包到同一个镜像里。
+当前没有修改根目录 `docker-compose.yml`。Web 使用独立的 `docker-compose.web.yml` 和 `TradingWeb/Dockerfile`。
+在 `tradingweb-image.yml` CI 中，CLI 与 Web 已经分 target 打包并分别发布成两份镜像：`tradingagents-cli` 和 `tradingagents-tradingweb`。
 
 ### 三种 compose 的区别
 
@@ -154,9 +155,18 @@ OPENAI_API_KEY=...
 
 ### GitHub 自动打包镜像
 
-仓库包含 `.github/workflows/tradingweb-image.yml`，当推送到 `main`、创建 `v*` tag，或手动触发 workflow 时，会自动构建并推送到 GitHub Container Registry：
+仓库包含 `.github/workflows/tradingweb-image.yml`，构建策略为：
+
+- `tradingagents-cli`：仅在 `cli` 分支推送时构建
+- `tradingagents-tradingweb`：在 `main` 推送与 `v*` tag 时构建
+
+仓库 push 时满足路径变更即可触发上述规则的相关任务（手动触发也可按规则指定）：
 
 ```text
+ghcr.io/osindex/tradingagents-cli:cli
+ghcr.io/osindex/tradingagents-cli:<branch-tag>
+ghcr.io/osindex/tradingagents-cli:sha-<commit>
+
 ghcr.io/osindex/tradingagents-tradingweb:main
 ghcr.io/osindex/tradingagents-tradingweb:<git-tag>
 ghcr.io/osindex/tradingagents-tradingweb:sha-<commit>
@@ -165,6 +175,7 @@ ghcr.io/osindex/tradingagents-tradingweb:sha-<commit>
 如果只想使用 GitHub 已打好的镜像，不在本机 build：
 
 ```bash
+docker pull ghcr.io/osindex/tradingagents-cli:cli
 docker pull ghcr.io/osindex/tradingagents-tradingweb:main
 ```
 
@@ -182,16 +193,44 @@ docker pull --platform linux/amd64 ghcr.io/osindex/tradingagents-tradingweb:main
 
 但更推荐等 workflow 发布了 `linux/amd64` + `linux/arm64` 双架构镜像后再直接拉取，这样就不需要手工指定平台了。
 
+### 分阶段构建说明
+
+TradingWeb 镜像现在采用分阶段构建：
+
+- **CLI 基础层**：安装 TradingAgents 核心代码和依赖
+- **Web 扩展层**：只安装 TradingWeb 的额外依赖并拷贝 Web 源码
+
+这样在大多数情况下，改 TradingWeb 前端/后端只会重建上层，不会把原 CLI 依赖整层重装。只有当 `tradingagents/`、`cli/`、`pyproject.toml` 或 `uv.lock` 变化时，基础层才会重建。
+
+双镜像由同一份 workflow 管理，但按分支与标签规则分离构建：
+
+- `cli` 目标：仅在 `cli` 分支
+- `tradingweb` 目标：仅在 `main` 与 `v*` tag
+
+### 双容器运行（mix-compose）
+
+如果你想把 CLI 和 Web 完全拆成两个容器运行，请使用根目录的 `docker-compose.mix.yml`。
+
+- `tradingcli`：负责执行 TradingAgents CLI / 运行引擎
+- `tradingweb`：负责登录、provider 管理、队列、历史、导出
+
+两个容器通过共享卷协作：
+
+- `tradingweb_data`：SQLite、memory、checkpoint、results 等共享数据
+- `tradingagents_data`：TradingAgents 自己的数据缓存
+
+这套方案不要求两个容器互相 import 源码；它们只通过 DB/文件路径/环境变量契约通信。
+
 然后运行：
 
 ```bash
-docker run --rm -p 8731:8731 \
-  --env-file .env \
-  -e TRADINGWEB_USERS="admin:change-me" \
-  -e TRADINGWEB_SECRET="replace-with-random-secret" \
-  -v tradingweb_data:/home/appuser/.tradingweb \
-  -v tradingagents_data:/home/appuser/.tradingagents \
-  ghcr.io/osindex/tradingagents-tradingweb:main
+# CLI 服务
+docker pull ghcr.io/osindex/tradingagents-cli:cli
+
+# Web 服务
+docker pull ghcr.io/osindex/tradingagents-tradingweb:main
+
+docker compose -f docker-compose.mix.yml up --pull always
 ```
 
 如果 GHCR package 是私有的，先登录：

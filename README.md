@@ -128,6 +128,10 @@ cp .env.example .env  # add your API keys
 docker compose run --rm tradingagents
 ```
 
+TradingWeb now uses a staged build: a cached TradingAgents/CLI base image layer and a thin Web layer on top. That means CLI dependencies and framework code are reused across builds, so changes under `TradingWeb/` don't need to rebuild the entire CLI stack every time.
+
+If you want to run the CLI and Web as two separate containers, use `docker-compose.mix.yml`. In that mode, the two services share the same data volumes (SQLite, memory, checkpoints, results) and communicate through the agreed file/database contract instead of importing each other.
+
 If you use the TradingWeb Docker variants and need to point a container at a gateway running on the host, note that `host.docker.internal` is not always available on Linux unless the compose file adds `extra_hosts: host.docker.internal:host-gateway`. When that is not available, use the host LAN IP (for example `http://192.168.1.10:3000/v1`) or add the `extra_hosts` mapping yourself.
 
 ### TradingWeb (Web UI)
@@ -137,6 +141,15 @@ If you want to run the packaged TradingWeb image with Docker Compose, there are 
 - `docker-compose.web.yml` — general-purpose; supports local build or pulling a prebuilt image.
 - `docker-compose.web.image.yml` — image-only; pulls the prebuilt GHCR image and runs it.
 - `docker-compose.web.min.yml` — minimal; keeps only image, ports, volumes, and default-user env vars.
+
+CI now also publishes `ghcr.io/osindex/tradingagents-cli:<tag>` in the same workflow so CLI can run as a standalone image.
+
+Current split rule:
+
+- `tradingagents-cli` builds on `cli` branch
+- `tradingagents-tradingweb` builds on `main` and `v*` tags
+
+CLI image tag example includes branch-based tag (for this branch): `cli`.
 
 For the minimal version, add default users via `TRADINGWEB_USERS`:
 
