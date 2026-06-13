@@ -1,5 +1,5 @@
 import { api, ApiError } from './api.js';
-import { getOptions, getModels } from './state.js';
+import { getOptions, getModels, getProviderProfiles } from './state.js';
 import { esc, isCryptoTicker, loadingHtml, skeletonHtml } from './util.js';
 
 const STEP_LABELS = ['标的与日期', '分析师团队', '研究深度', 'LLM 厂商', '模型选择', '确认'];
@@ -25,6 +25,7 @@ export function render(root) {
     analysts: new Set(),
     research_depth: null,
     provider: '',
+    provider_profile_id: null,
     backend_url: '',
     thinkingValue: null,
     quick: null, quickCustom: '',
@@ -56,7 +57,16 @@ export function render(root) {
     data.analysts = new Set((opts.analysts || []).map((a) => a.key));
     data.research_depth = opts.depths && opts.depths.length ? opts.depths[0].value : 1;
     const p = (opts.providers || [])[0];
-    if (p) {
+    const profile = (opts.provider_profiles || [])[0];
+    if (profile) {
+      data.provider_profile_id = profile.id;
+      data.provider = profile.provider_key || '';
+      data.backend_url = profile.base_url || '';
+      data.thinkingValue = profile.google_thinking_level || profile.openai_reasoning_effort || profile.anthropic_effort || null;
+      data.quick = profile.quick_think_llm || null;
+      data.deep = profile.deep_think_llm || null;
+      getModels(data.provider).catch(() => {});
+    } else if (p) {
       data.provider = p.key;
       data.backend_url = p.base_url || '';
       data.thinkingValue = p.thinking ? p.thinking.default : null;
@@ -185,8 +195,8 @@ export function render(root) {
   /* ---------- ④ LLM 厂商 ---------- */
   function step4Html() {
     const p = currentProvider();
-    const options = (opts.providers || []).map((pr) =>
-      `<option value="${esc(pr.key)}" ${pr.key === data.provider ? 'selected' : ''}>${esc(pr.label)}</option>`
+    const options = (opts.provider_profiles || []).map((pr) =>
+      `<option value="${esc(String(pr.id))}" ${String(pr.id) === String(data.provider_profile_id) ? 'selected' : ''}>${esc(pr.name)} · ${esc(pr.provider_key)}</option>`
     ).join('');
     let thinkingHtml = '';
     if (p && p.thinking) {
@@ -203,15 +213,15 @@ export function render(root) {
         </div>`;
     }
     return `
-      <h2 class="wizard-step-title">LLM 厂商</h2>
-      <p class="wizard-step-sub">选择大模型服务提供方，并按需调整网关地址</p>
+      <h2 class="wizard-step-title">接入商配置</h2>
+      <p class="wizard-step-sub">选择一个存储在 SQLite 中的 provider profile</p>
       <div class="field">
-        <label class="field-label" for="f-provider">厂商</label>
-        <select class="select" id="f-provider">${options}</select>
-        ${p && p.base_url ? `<div class="field-hint">默认网关：<span class="mono">${esc(p.base_url)}</span></div>` : ''}
+        <label class="field-label" for="f-profile">接入商</label>
+        <select class="select" id="f-profile">${options}</select>
+        ${currentProfile() && currentProfile().base_url ? `<div class="field-hint">默认网关：<span class="mono">${esc(currentProfile().base_url)}</span></div>` : ''}
       </div>
       <div class="field">
-        <label class="field-label" for="f-backend">网关地址（自定义网关地址）</label>
+        <label class="field-label" for="f-backend">网关地址（profile 覆盖项）</label>
         <input class="input mono" id="f-backend" value="${esc(data.backend_url)}" placeholder="https://…" spellcheck="false">
       </div>
       ${thinkingHtml}`;
@@ -295,8 +305,13 @@ export function render(root) {
   }
 
   function providerLabel() {
-    const p = currentProvider();
-    return p ? p.label : data.provider;
+    const p = currentProfile();
+    if (p) return `${p.name} · ${p.provider_key}`;
+    const pr = currentProvider();
+    return pr ? pr.label : data.provider;
+  }
+  function currentProfile() {
+    return (opts.provider_profiles || []).find((p) => String(p.id) === String(data.provider_profile_id)) || null;
   }
   function resolvedQuick() {
     return data.quick === CUSTOM ? data.quickCustom.trim() : (data.quick || '');
@@ -347,13 +362,17 @@ export function render(root) {
         });
       });
     } else if (step === 4) {
-      const sel = root.querySelector('#f-provider');
+      const sel = root.querySelector('#f-profile');
       sel.addEventListener('change', () => {
-        data.provider = sel.value;
-        const p = currentProvider();
-        data.backend_url = p && p.base_url ? p.base_url : '';
-        data.thinkingValue = p && p.thinking ? p.thinking.default : null;
-        data.quick = null; data.deep = null;
+        data.provider_profile_id = Number(sel.value);
+        const profile = currentProfile();
+        data.provider = profile && profile.provider_key ? profile.provider_key : data.provider;
+        data.backend_url = profile && profile.base_url ? profile.base_url : '';
+        data.thinkingValue = profile && (profile.google_thinking_level || profile.openai_reasoning_effort || profile.anthropic_effort) || null;
+        if (profile) {
+          data.quick = profile.quick_think_llm || data.quick;
+          data.deep = profile.deep_think_llm || data.deep;
+        }
         models = null; modelsProvider = '';
         getModels(data.provider).catch(() => {});
         draw();
@@ -493,6 +512,7 @@ export function render(root) {
       analysis_date: data.analysis_date,
       analysts,
       research_depth: Number(data.research_depth),
+      provider_profile_id: data.provider_profile_id,
       llm_provider: data.provider,
       backend_url: data.backend_url,
       quick_think_llm: resolvedQuick(),

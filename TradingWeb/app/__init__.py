@@ -1,1 +1,1 @@
-"""TradingWeb backend package."""
+"""TradingWeb app package."""

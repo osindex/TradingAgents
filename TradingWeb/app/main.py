@@ -60,6 +60,7 @@ from .auth import (  # noqa: E402
 )
 from .options import (  # noqa: E402
     detect_asset_type,
+    default_provider_profiles,
     get_model_options_payload,
     get_options_payload,
     known_provider_keys,
@@ -89,6 +90,7 @@ app = FastAPI(title="TradingWeb", docs_url=None, redoc_url=None)
 @app.on_event("startup")
 def _startup() -> None:
     db.init_db()
+    db.ensure_provider_profiles(default_provider_profiles())
     if MOCK_MODE:
         logger.info("TradingWeb running in MOCK mode (TRADINGWEB_MOCK=1)")
 
@@ -119,7 +121,26 @@ def me(username: str = Depends(require_user)) -> LoginResponse:
 
 @app.get("/api/options")
 def options(username: str = Depends(require_user)) -> Dict[str, Any]:
-    return get_options_payload(MOCK_MODE)
+    payload = get_options_payload(MOCK_MODE)
+    payload["provider_profiles"] = [
+        {
+            "id": p["id"],
+            "name": p["name"],
+            "label": p["name"],
+            "provider_key": p["provider_key"],
+            "base_url": p.get("base_url"),
+            "api_key_env": p.get("api_key_env"),
+            "quick_think_llm": p.get("quick_think_llm"),
+            "deep_think_llm": p.get("deep_think_llm"),
+            "output_language": p.get("output_language"),
+            "google_thinking_level": p.get("google_thinking_level"),
+            "openai_reasoning_effort": p.get("openai_reasoning_effort"),
+            "anthropic_effort": p.get("anthropic_effort"),
+            "enabled": bool(p.get("enabled", 1)),
+        }
+        for p in db.list_provider_profiles()
+    ]
+    return payload
 
 
 @app.get("/api/options/models")
@@ -129,10 +150,37 @@ def model_options(
     return get_model_options_payload(provider)
 
 
+@app.get("/api/provider-profiles")
+def provider_profiles(username: str = Depends(require_user)) -> Dict[str, Any]:
+    return {"profiles": db.list_provider_profiles()}
+
+
+@app.post("/api/provider-profiles", response_model=Dict[str, Any], status_code=201)
+def create_provider_profile(body: Dict[str, Any], username: str = Depends(require_user)) -> Dict[str, Any]:
+    profile_id = db.create_provider_profile(body)
+    profile = db.get_provider_profile(profile_id)
+    return profile or {"id": profile_id}
+
+
+@app.put("/api/provider-profiles/{profile_id}")
+def update_provider_profile(profile_id: int, body: Dict[str, Any], username: str = Depends(require_user)) -> Dict[str, Any]:
+    if not db.update_provider_profile(profile_id, body):
+        raise HTTPException(status_code=404, detail="Provider profile not found")
+    profile = db.get_provider_profile(profile_id)
+    return profile or {"id": profile_id}
+
+
+@app.delete("/api/provider-profiles/{profile_id}", status_code=204)
+def remove_provider_profile(profile_id: int, username: str = Depends(require_user)) -> Response:
+    if not db.delete_provider_profile(profile_id):
+        raise HTTPException(status_code=404, detail="Provider profile not found")
+    return Response(status_code=204)
+
+
 # ------------------------------------------------------------------- runs
 
-def _validate_run_request(body: CreateRunRequest) -> tuple[str, list[str]]:
-    """Validate; return (asset_type, ordered analyst keys). Raises 400."""
+def _validate_run_request(body: CreateRunRequest) -> tuple[str, list[str], Dict[str, Any]]:
+    """Validate; return (asset_type, ordered analyst keys, resolved profile). Raises 400."""
     ticker = body.ticker.strip().upper()
     if not validate_ticker(ticker):
         raise HTTPException(
@@ -163,11 +211,19 @@ def _validate_run_request(body: CreateRunRequest) -> tuple[str, list[str]]:
     if body.research_depth not in (1, 3, 5):
         raise HTTPException(status_code=400, detail="research_depth must be 1, 3 or 5")
 
-    provider = body.llm_provider.lower()
+    profile: Dict[str, Any] = {}
+    if body.provider_profile_id is not None:
+        profile = db.get_provider_profile(body.provider_profile_id) or {}
+        if not profile:
+            raise HTTPException(status_code=400, detail=f"Unknown provider_profile_id: {body.provider_profile_id}")
+
+    provider = (profile.get("provider_key") or body.llm_provider).lower()
     if provider not in known_provider_keys():
         raise HTTPException(status_code=400, detail=f"Unknown llm_provider: {provider}")
 
-    if not body.quick_think_llm.strip() or not body.deep_think_llm.strip():
+    quick_model = (profile.get("quick_think_llm") or body.quick_think_llm).strip()
+    deep_model = (profile.get("deep_think_llm") or body.deep_think_llm).strip()
+    if not quick_model or not deep_model:
         raise HTTPException(status_code=400, detail="Both quick and deep models are required")
 
     # API key presence check (real mode only; ollama needs no key).
@@ -189,29 +245,39 @@ def _validate_run_request(body: CreateRunRequest) -> tuple[str, list[str]]:
 
     # Preserve canonical order: market, social, news, fundamentals.
     ordered = [a for a in ("market", "social", "news", "fundamentals") if a in analysts]
-    return asset_type, ordered
+    return asset_type, ordered, profile
 
 
 @app.post("/api/runs", status_code=201, response_model=CreateRunResponse)
 def create_run(
     body: CreateRunRequest, username: str = Depends(require_user)
 ) -> CreateRunResponse:
-    asset_type, analyst_keys = _validate_run_request(body)
+    asset_type, analyst_keys, profile = _validate_run_request(body)
     ticker = body.ticker.strip().upper()
-    provider = body.llm_provider.lower()
-    backend_url = body.backend_url or provider_default_base_url(provider)
+    provider = (profile.get("provider_key") or body.llm_provider).lower()
+    backend_url = profile.get("base_url") or body.backend_url or provider_default_base_url(provider)
+    quick_model = (profile.get("quick_think_llm") or body.quick_think_llm).strip()
+    deep_model = (profile.get("deep_think_llm") or body.deep_think_llm).strip()
+    provider_profile_id = profile.get("id") if profile else body.provider_profile_id
+    provider_profile_name = profile.get("name") if profile else None
 
     selections: Dict[str, Any] = body.model_dump()
     selections["ticker"] = ticker
     selections["llm_provider"] = provider
     selections["backend_url"] = backend_url
+    selections["provider_profile_id"] = provider_profile_id
+    selections["provider_profile_name"] = provider_profile_name
+    selections["quick_think_llm"] = quick_model
+    selections["deep_think_llm"] = deep_model
     selections["analysts"] = analyst_keys
 
     config_summary = {
         "llm_provider": provider,
         "backend_url": backend_url,
-        "quick_think_llm": body.quick_think_llm,
-        "deep_think_llm": body.deep_think_llm,
+        "provider_profile_id": provider_profile_id,
+        "provider_profile_name": provider_profile_name,
+        "quick_think_llm": quick_model,
+        "deep_think_llm": deep_model,
         "max_debate_rounds": body.research_depth,
         "max_risk_discuss_rounds": body.research_depth,
         "output_language": body.output_language,
@@ -266,6 +332,8 @@ def list_runs(
                 asset_type=row["asset_type"],
                 status=row["status"],
                 decision=row.get("decision"),
+                provider_profile_id=sel.get("provider_profile_id"),
+                provider_profile_name=sel.get("provider_profile_name"),
                 llm_provider=sel.get("llm_provider"),
                 deep_think_llm=sel.get("deep_think_llm"),
                 quick_think_llm=sel.get("quick_think_llm"),
@@ -294,6 +362,8 @@ def run_detail(run_id: int, username: str = Depends(require_user)) -> RunDetailR
         status=run["status"],
         decision=run.get("decision"),
         error=run.get("error"),
+        provider_profile_id=_json_or_empty(run.get("selections_json")).get("provider_profile_id"),
+        provider_profile_name=_json_or_empty(run.get("selections_json")).get("provider_profile_name"),
         created_at=run["created_at"],
         finished_at=run.get("finished_at"),
         selections=_json_or_empty(run.get("selections_json")),

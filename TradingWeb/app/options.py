@@ -122,6 +122,46 @@ def get_options_payload(mock: bool) -> Dict[str, Any]:
     }
 
 
+def default_provider_profiles() -> List[Dict[str, Any]]:
+    """Seed data for SQLite-backed provider profiles."""
+    def _pick_default(provider: str, mode: str) -> str:
+        try:
+            from tradingagents.llm_clients.model_catalog import get_model_options
+
+            options = get_model_options(provider, mode)
+            for label, value in options:
+                if value != "custom":
+                    return value
+        except Exception:
+            pass
+        return ""
+
+    profiles = []
+    for p in _providers():
+        api_key_env = None
+        try:
+            from tradingagents.llm_clients.api_key_env import get_api_key_env
+
+            api_key_env = get_api_key_env(p["key"])
+        except ImportError:
+            api_key_env = None
+        profiles.append(
+            {
+                "name": p["label"],
+                "provider_key": p["key"],
+                "base_url": p.get("base_url"),
+                "api_key_env": api_key_env,
+                "quick_think_llm": _pick_default(p["key"], "quick"),
+                "deep_think_llm": _pick_default(p["key"], "deep"),
+                "output_language": "English",
+                "google_thinking_level": p.get("thinking", {}).get("default") if p.get("thinking") else None,
+                "openai_reasoning_effort": p.get("thinking", {}).get("default") if p.get("thinking") and p["key"] == "openai" else None,
+                "anthropic_effort": p.get("thinking", {}).get("default") if p.get("thinking") and p["key"] == "anthropic" else None,
+            }
+        )
+    return profiles
+
+
 def get_model_options_payload(provider: str) -> Dict[str, Any]:
     """Normalize tradingagents' (label, value) tuples to [{value,label}].
 

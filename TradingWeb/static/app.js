@@ -5,6 +5,7 @@ import * as viewLogin from './view-login.js';
 import * as viewWizard from './view-wizard.js';
 import * as viewRun from './view-run.js';
 import * as viewHistory from './view-history.js';
+import * as viewProfiles from './view-profiles.js';
 
 const root = document.getElementById('view-root');
 const navbar = document.getElementById('navbar');
@@ -32,6 +33,7 @@ function renderNavbar() {
     </a>
     <nav class="nav-links">
       <a class="nav-link" data-route="new" href="#/new">新建分析</a>
+      <a class="nav-link" data-route="profiles" href="#/profiles">接入商管理</a>
       <a class="nav-link" data-route="runs" href="#/runs">历史记录</a>
     </nav>
     <span class="nav-spacer"></span>
@@ -46,6 +48,7 @@ function highlightNav() {
   navbar.querySelectorAll('.nav-link').forEach((a) => {
     const r = a.dataset.route;
     const active = (r === 'new' && hash.startsWith('#/new'))
+      || (r === 'profiles' && hash.startsWith('#/profiles'))
       || (r === 'runs' && hash.startsWith('#/runs'));
     a.classList.toggle('active', active);
   });
@@ -86,6 +89,8 @@ function route() {
   const runMatch = hash.match(/^#\/runs\/([^/?#]+)/);
   if (runMatch) {
     cleanup = viewRun.render(root, decodeURIComponent(runMatch[1])) || null;
+  } else if (hash === '#/profiles' || hash.startsWith('#/profiles?')) {
+    cleanup = viewProfiles.render(root) || null;
   } else if (hash === '#/runs' || hash.startsWith('#/runs?')) {
     cleanup = viewHistory.render(root) || null;
   } else if (hash === '#/new' || hash.startsWith('#/new?')) {

@@ -175,6 +175,39 @@ docker run --rm -p 8731:8731 \
 echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 ```
 
+### 不改 CLI 源码的 profile 启动器
+
+如果你想把 Web 里保存的 provider profile 直接拿去启动原始 `tradingagents` CLI，可以使用：
+
+```bash
+cd TradingWeb
+python -m app.launcher --profile "OpenAI"
+```
+
+或者按 profile id：
+
+```bash
+cd TradingWeb
+python -m app.launcher --profile-id 1
+```
+
+它会从 SQLite 里读取 profile，并在**子进程 env** 中注入：
+
+- `TRADINGAGENTS_LLM_PROVIDER`
+- `TRADINGAGENTS_LLM_BACKEND_URL`
+- `TRADINGAGENTS_QUICK_THINK_LLM`
+- `TRADINGAGENTS_DEEP_THINK_LLM`
+- `TRADINGAGENTS_OUTPUT_LANGUAGE`
+
+这样不会污染当前进程，也不会改 CLI 源码。
+
+如果你想给 CLI 透传原始参数，可以在 launcher 后面继续加：
+
+```bash
+cd TradingWeb
+python -m app.launcher --profile "OpenAI" -- --help
+```
+
 ### 使用独立 compose（推荐）
 
 准备 `.env`（可以由 `.env.local.example` 复制）。`docker-compose.web.yml` 不会修改原有 compose；`.env` 是可选的，但真实调用 LLM 时需要通过它或系统环境变量提供 API Key / base_url：
@@ -216,6 +249,18 @@ docker compose -f docker-compose.web.yml up --build
 ```
 
 SQLite 持久化在 compose volume `tradingweb_data` 中；TradingAgents 的记忆/缓存持久化在 `tradingagents_data` 中。
+
+### Web 里的“接入商管理”
+
+Web 新增了“接入商管理”页，可以直接管理 SQLite 里的 provider profiles：
+
+- provider / base_url
+- API key 环境变量名
+- quick / deep 模型默认值
+- thinking 参数
+- 启用/禁用
+
+新建分析时，优先从 profile 读取配置；如果 profile 里已经配置了模型和网关，向导里只需选择 profile 即可。
 
 ### 手动 docker build/run
 

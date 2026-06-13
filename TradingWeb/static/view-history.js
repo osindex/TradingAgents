@@ -48,7 +48,7 @@ export function render(root) {
         <tr data-id="${esc(String(r.id))}">
           <td class="cell-ticker">${esc(r.ticker)}${r.asset_type === 'crypto' ? '<span class="crypto-badge">加密</span>' : ''}</td>
           <td class="cell-dim mono">${esc(r.analysis_date)}</td>
-          <td class="cell-model">${esc(r.llm_provider || '—')} / <span class="mono">${esc(r.deep_think_llm || '—')}</span></td>
+          <td class="cell-model">${esc(r.provider_profile_name || r.llm_provider || '—')} / <span class="mono">${esc(r.deep_think_llm || '—')}</span></td>
           <td>${statusBadge(r.status)}</td>
           <td>${r.decision ? decisionBadge(r.decision) : '<span class="cell-dim">—</span>'}</td>
           <td class="cell-dim mono">${esc(fmtDateTime(r.created_at))}</td>

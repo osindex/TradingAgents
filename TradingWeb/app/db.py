@@ -71,6 +71,22 @@ CREATE TABLE IF NOT EXISTS run_reports (
     updated_at TEXT NOT NULL,
     PRIMARY KEY(run_id, section)
 );
+CREATE TABLE IF NOT EXISTS provider_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    provider_key TEXT NOT NULL,
+    base_url TEXT,
+    api_key_env TEXT,
+    quick_think_llm TEXT NOT NULL,
+    deep_think_llm TEXT NOT NULL,
+    output_language TEXT NOT NULL DEFAULT 'English',
+    google_thinking_level TEXT,
+    openai_reasoning_effort TEXT,
+    anthropic_effort TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -86,6 +102,41 @@ def init_db() -> None:
         finally:
             conn.close()
         _initialized = True
+
+
+def ensure_provider_profiles(default_profiles: List[Dict[str, Any]]) -> None:
+    """Seed provider profiles once if the table is empty."""
+    conn = connect()
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM provider_profiles").fetchone()[0]
+        if count:
+            return
+        now = utc_now_iso()
+        for profile in default_profiles:
+            conn.execute(
+                "INSERT INTO provider_profiles "
+                "(name, provider_key, base_url, api_key_env, quick_think_llm, deep_think_llm, "
+                " output_language, google_thinking_level, openai_reasoning_effort, anthropic_effort, "
+                " enabled, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                (
+                    profile["name"],
+                    profile["provider_key"],
+                    profile.get("base_url"),
+                    profile.get("api_key_env"),
+                    profile["quick_think_llm"],
+                    profile["deep_think_llm"],
+                    profile.get("output_language", "English"),
+                    profile.get("google_thinking_level"),
+                    profile.get("openai_reasoning_effort"),
+                    profile.get("anthropic_effort"),
+                    now,
+                    now,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------- runs
@@ -236,5 +287,89 @@ def get_reports(run_id: int) -> Dict[str, str]:
             "SELECT section, content FROM run_reports WHERE run_id = ?", (run_id,)
         ).fetchall()
         return {r["section"]: r["content"] for r in rows}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------- provider profiles
+
+def list_provider_profiles() -> List[Dict[str, Any]]:
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM provider_profiles WHERE enabled = 1 ORDER BY id ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_provider_profile(profile_id: int) -> Optional[Dict[str, Any]]:
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM provider_profiles WHERE id = ? AND enabled = 1", (profile_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def create_provider_profile(values: Dict[str, Any]) -> int:
+    conn = connect()
+    try:
+        now = utc_now_iso()
+        cur = conn.execute(
+            "INSERT INTO provider_profiles "
+            "(name, provider_key, base_url, api_key_env, quick_think_llm, deep_think_llm, "
+            " output_language, google_thinking_level, openai_reasoning_effort, anthropic_effort, "
+            " enabled, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                values["name"],
+                values["provider_key"],
+                values.get("base_url"),
+                values.get("api_key_env"),
+                values["quick_think_llm"],
+                values["deep_think_llm"],
+                values.get("output_language", "English"),
+                values.get("google_thinking_level"),
+                values.get("openai_reasoning_effort"),
+                values.get("anthropic_effort"),
+                1 if values.get("enabled", True) else 0,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+    finally:
+        conn.close()
+
+
+def update_provider_profile(profile_id: int, values: Dict[str, Any]) -> bool:
+    if not values:
+        return False
+    values = dict(values)
+    values["updated_at"] = utc_now_iso()
+    cols = ", ".join(f"{k} = ?" for k in values)
+    conn = connect()
+    try:
+        cur = conn.execute(
+            f"UPDATE provider_profiles SET {cols} WHERE id = ?",
+            (*values.values(), profile_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_provider_profile(profile_id: int) -> bool:
+    conn = connect()
+    try:
+        cur = conn.execute("DELETE FROM provider_profiles WHERE id = ?", (profile_id,))
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
