@@ -168,6 +168,38 @@ def model_options(
     return get_model_options_payload(provider)
 
 
+@app.get("/api/symbols/lookup")
+def symbols_lookup(
+    q: str = Query(..., min_length=1),
+    market: str = Query("all"),
+    username: str = Depends(require_user),
+) -> Dict[str, Any]:
+    """Search tradeable instruments by code or name, optionally per market.
+
+    Helps users find the correct Yahoo Finance symbol (e.g. A-share .SS/.SZ,
+    HK .HK with exchange padding, US no-suffix) before submitting a run, so a
+    wrong code is caught here instead of crashing the analysis.
+    """
+    from . import symbols
+
+    market = (market or "all").upper()
+    if market not in ("ALL", "US", "HK", "SH", "SZ"):
+        market = "all"
+    results = symbols.search_symbols(q, market="all" if market == "ALL" else market)
+    return {"query": q, "market": market, "results": results}
+
+
+@app.get("/api/symbols/validate")
+def symbols_validate(
+    symbol: str = Query(..., min_length=1),
+    username: str = Depends(require_user),
+) -> Dict[str, Any]:
+    """Validate a single ticker and return its resolved company identity."""
+    from . import symbols
+
+    return symbols.validate_symbol(symbol)
+
+
 @app.get("/api/provider-profiles")
 def provider_profiles(username: str = Depends(require_user)) -> Dict[str, Any]:
     if not is_admin(username):

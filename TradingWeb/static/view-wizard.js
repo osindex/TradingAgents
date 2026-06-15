@@ -136,8 +136,21 @@ export function render(root) {
   function step1Html() {
     return `
       <h2 class="wizard-step-title">标的与日期</h2>
-      <p class="wizard-step-sub">输入要分析的股票 / 加密资产代码与分析日期</p>
-      <div class="form-2col">
+      <p class="wizard-step-sub">输入代码，或按名称 / 代码搜索后一键填入正确的 Yahoo 代码</p>
+      <div class="symbol-search">
+        <select class="input" id="f-market" style="max-width:130px">
+          <option value="all">全部市场</option>
+          <option value="US">美股</option>
+          <option value="HK">港股</option>
+          <option value="SH">沪 A 股</option>
+          <option value="SZ">深 A 股</option>
+        </select>
+        <input class="input" id="f-symsearch" placeholder="如 Tencent / 600519 / Apple"
+               autocomplete="off" spellcheck="false">
+        <button class="btn btn-primary" id="f-symsearch-btn" type="button">搜索</button>
+      </div>
+      <div class="symbol-results" id="f-symresults"></div>
+      <div class="form-2col" style="margin-top:var(--sp-4)">
         <div class="field">
           <label class="field-label" for="f-ticker">股票代码
             <span id="crypto-badge">${crypto() ? '<span class="crypto-badge">加密资产</span>' : ''}</span>
@@ -145,13 +158,84 @@ export function render(root) {
           <input class="input mono" id="f-ticker" value="${esc(data.ticker)}"
                  placeholder="SPY / 0700.HK / BTC-USD" autocomplete="off" spellcheck="false"
                  style="text-transform:uppercase">
-          <div class="field-hint">支持美股、港股（.HK）及加密资产（如 BTC-USD）</div>
+          <div class="field-hint" id="f-ticker-hint">A股沪市用 .SS、深市用 .SZ；港股用 .HK（如 0700.HK）；美股无后缀</div>
         </div>
         <div class="field">
           <label class="field-label" for="f-date">分析日期</label>
           <input class="input mono" id="f-date" type="date" value="${esc(data.analysis_date)}">
         </div>
       </div>`;
+  }
+
+  /* ---------- symbol search / one-click fill ---------- */
+  function bindSymbolSearch(tickerInput) {
+    const searchInput = root.querySelector('#f-symsearch');
+    const searchBtn = root.querySelector('#f-symsearch-btn');
+    const marketSel = root.querySelector('#f-market');
+    const resultsBox = root.querySelector('#f-symresults');
+    const hint = root.querySelector('#f-ticker-hint');
+    if (!searchInput || !searchBtn || !resultsBox) return;
+
+    async function runSearch() {
+      const q = searchInput.value.trim();
+      if (!q) { resultsBox.innerHTML = ''; return; }
+      const market = marketSel ? marketSel.value : 'all';
+      resultsBox.innerHTML = `<div class="sym-loading"><span class="spinner"></span>搜索中…</div>`;
+      try {
+        const res = await api(`/api/symbols/lookup?q=${encodeURIComponent(q)}&market=${encodeURIComponent(market)}`);
+        const list = (res && res.results) || [];
+        if (!list.length) {
+          resultsBox.innerHTML = `<div class="sym-empty">未找到匹配的标的。请换用英文名称或代码（中文暂不支持）。</div>`;
+          return;
+        }
+        resultsBox.innerHTML = list.map((r, i) => `
+          <div class="sym-row">
+            <div class="sym-meta">
+              <span class="sym-code mono">${esc(r.symbol)}</span>
+              <span class="sym-name">${esc(r.name || '')}</span>
+              <span class="sym-exch">${esc(r.exchange || '')}${r.type ? ' · ' + esc(r.type) : ''}</span>
+            </div>
+            <button class="btn btn-sm btn-primary sym-fill" type="button" data-sym="${esc(r.symbol)}" data-idx="${i}">一键填入</button>
+          </div>`).join('');
+        resultsBox.querySelectorAll('.sym-fill').forEach((b) => {
+          b.addEventListener('click', () => {
+            const sym = b.dataset.sym;
+            tickerInput.value = sym;
+            data.ticker = sym.toUpperCase().trim();
+            const badge = root.querySelector('#crypto-badge');
+            if (badge) badge.innerHTML = crypto() ? '<span class="crypto-badge">加密资产</span>' : '';
+            resultsBox.innerHTML = '';
+            validateTicker();
+          });
+        });
+      } catch (e) {
+        resultsBox.innerHTML = `<div class="sym-empty">搜索失败：${esc(e instanceof ApiError ? e.detail : (e && e.message) || '请稍后重试')}</div>`;
+      }
+    }
+
+    async function validateTicker() {
+      const sym = (data.ticker || '').trim();
+      if (!sym || !hint) return;
+      hint.className = 'field-hint';
+      hint.textContent = '校验中…';
+      try {
+        const res = await api(`/api/symbols/validate?symbol=${encodeURIComponent(sym)}`);
+        if (res && res.valid) {
+          hint.className = 'field-hint field-hint-ok';
+          hint.textContent = `✓ ${res.company_name}${res.exchange ? '（' + res.exchange + '）' : ''}`;
+        } else {
+          hint.className = 'field-hint field-hint-warn';
+          hint.textContent = `✗ Yahoo 未找到「${sym}」。请检查代码：沪 A .SS、深 A .SZ、港股 .HK（如 0700.HK），或用上方搜索。`;
+        }
+      } catch (e) {
+        hint.className = 'field-hint';
+        hint.textContent = '无法校验（网络问题），可继续提交，但代码可能无效。';
+      }
+    }
+
+    searchBtn.addEventListener('click', runSearch);
+    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
+    tickerInput.addEventListener('blur', validateTicker);
   }
 
   /* ---------- ② 分析师团队 ---------- */
@@ -350,6 +434,7 @@ export function render(root) {
       root.querySelector('#f-date').addEventListener('change', (e) => {
         data.analysis_date = e.target.value;
       });
+      bindSymbolSearch(t);
     } else if (step === 2) {
       root.querySelectorAll('.opt-card[data-analyst]').forEach((card) => {
         const input = card.querySelector('input');
